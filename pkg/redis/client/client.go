@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"fmt"
 
 	redis "github.com/go-redis/redis/v8"
 )
@@ -44,8 +43,12 @@ func (d *Descriptor) GetKeys() (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(ret)
 	return ret, nil
+}
+
+func (d *Descriptor) FlushRedis() *redis.StatusCmd {
+	status := d.Rdb.FlushAll(ctx)
+	return status
 }
 
 func New(addr string, password string, db int) *Descriptor {

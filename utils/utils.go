@@ -2,7 +2,7 @@ package utils
 
 import (
 	"context"
-	"gpu-scheduler/pkg/pods"
+	"k8s-gpu-scheduler/pkg/pods"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,7 +16,7 @@ func Check(e error) {
 }
 
 func FindNodesIP(podNameContains string, namespace string, fieldSelector string) (string, error) {
-	desc, err := pods.New(namespace, fieldSelector)
+	desc, err := pods.New(namespace, fieldSelector, "")
 	if err != nil {
 		return "", err
 	}
@@ -44,7 +44,7 @@ func FindNodesIP(podNameContains string, namespace string, fieldSelector string)
 }
 
 func GetNodesDcgmPod(nodeName string) (string, error) {
-	desc, err := pods.New("", "spec.nodeName="+nodeName)
+	desc, err := pods.New("", "spec.nodeName="+nodeName, "")
 	if err != nil {
 		return "", nil
 	}

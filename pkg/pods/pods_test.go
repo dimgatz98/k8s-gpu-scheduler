@@ -30,7 +30,7 @@ func Test_ParseResponse(t *testing.T) {
 		tc := tt[i]
 
 		t.Run(tc.name, func(t *testing.T) {
-			desc, err := New("", "")
+			desc, err := New("", "", "/home/dimitris/.kube/config")
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

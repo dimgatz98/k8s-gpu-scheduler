@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"gpu-scheduler/pkg/pods"
-	promMetrics "gpu-scheduler/pkg/prom/fetch_prom_metrics"
-	"gpu-scheduler/pkg/redis/client"
-	"gpu-scheduler/utils"
+	"k8s-gpu-scheduler/pkg/pods"
+	promMetrics "k8s-gpu-scheduler/pkg/prom/fetch_prom_metrics"
+	"k8s-gpu-scheduler/pkg/redis/client"
+	"k8s-gpu-scheduler/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -168,7 +168,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	}
 
 	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it get into pod's env
-	podDesc, err := pods.New(p.GetNamespace(), "")
+	podDesc, err := pods.New(p.GetNamespace(), "", "")
 	if err != nil {
 		klog.Info("Pods.New() failed in PostBind: ", err.Error())
 	}

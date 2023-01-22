@@ -1,4 +1,4 @@
-TAG=1.5
+TAG=1.11
 REPO=tzourhs
 
 create-bin:

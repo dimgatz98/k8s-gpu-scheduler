@@ -11,6 +11,7 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 type PatchStringValue struct {
@@ -170,15 +171,19 @@ func KeyExists(key string, m map[string]string) bool {
 	return false
 }
 
-func New(namespace string, fieldSelector string) (r *Descriptor, err error) {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, err
+func New(namespace string, fieldSelector string, configPath string) (r *Descriptor, err error) {
+	var config *rest.Config
+	if configPath == "" {
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		config, err = clientcmd.BuildConfigFromFlags("", "/home/dimitris/.kube/config")
+		if err != nil {
+			return nil, err
+		}
 	}
-	// config, err := clientcmd.BuildConfigFromFlags("", "/home/dimitris/.kube/config")
-	// if err != nil {
-	// 	return nil, err
-	// }
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {

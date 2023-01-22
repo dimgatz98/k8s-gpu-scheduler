@@ -1,13 +1,8 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: profiler
----
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: profiler-client-daemonset
-  namespace: profiler
+  namespace: redis
   labels:
     k8s-app: profiler-client
 spec:
@@ -19,9 +14,10 @@ spec:
       labels:
         name: profiler-client
     spec:
+      serviceAccount: profiler-sa
       containers:
       - name: profiler-client
-        image: tzourhs/profiler_client:1.5
+        image: tzourhs/profiler_client:1.11
         imagePullPolicy: IfNotPresent
         command:
         - /bin/bash
