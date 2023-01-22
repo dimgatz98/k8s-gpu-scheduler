@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: game-demo-1
+spec:
+  schedulerName: gpu-scheduler
+  containers:
+    - name: demo
+      image: ubuntu
+      envFrom:
+      - configMapRef:
+          name: game-demo
+      command: ["/bin/bash", "-c", "for i in {1..100}; do sleep 5; echo $CUDA_VISIBLE_DEVICES; done"]

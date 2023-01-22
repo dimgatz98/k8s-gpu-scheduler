@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: configmap-demo
+  labels:
+    app.kubernetes.io/name: configmap-demo
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: configmap-demo
+  template:
+    metadata:
+      labels:
+        app: configmap-demo
+    spec:
+      schedulerName: gpu-scheduler
+      containers:
+        - name: demo
+          image: ubuntu
+          envFrom:
+          - configMapRef:
+              name: game-demo
+          command: ["/bin/bash", "-c", "for i in {1..100}; do sleep 5; echo $CUDA_VISIBLE_DEVICES; done"]

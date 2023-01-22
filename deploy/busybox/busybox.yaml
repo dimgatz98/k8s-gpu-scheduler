@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busybox
+  labels:
+    app.kubernetes.io/name: busybox
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: busybox
+  template:
+    metadata:
+      labels:
+        app: busybox
+    spec:
+      schedulerName: gpu-scheduler
+      containers:
+      - image: busybox:latest
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+          name: game-demo
+        name: busybox
+        command: ["sleep", "3600"]

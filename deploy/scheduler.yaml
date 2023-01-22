@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scheduler-config
+  namespace: kube-system
+data:
+  scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1beta1
+    kind: KubeSchedulerConfiguration
+    leaderElection:
+      leaderElect: true
+      resourceName: gpu-scheduler
+      resourceNamespace: kube-system
+    profiles:
+    - schedulerName: gpu-scheduler
+      plugins:
+        score:
+          enabled:
+          - name: "GPU"
+            weight: 10100
+        postBind:
+          enabled:
+          - name: "GPU"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-scheduler
+  namespace: kube-system
+  labels:
+    component: gpu-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: gpu-scheduler
+  template:
+    metadata:
+      labels:
+        component: gpu-scheduler
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      terminationGracePeriodSeconds: 30
+      serviceAccount: sample-sa
+      priorityClassName: system-cluster-critical
+      volumes:
+      - name: scheduler-config
+        configMap:
+          name: scheduler-config
+      containers:
+      - name: scheduler-ctrl
+        image: tzourhs/gpu-scheduler:1.37
+        imagePullPolicy: IfNotPresent
+        command:
+        args:
+        - /scheduler/bin/gpu-sched
+        - --config=/config/scheduler-config.yaml
+        - --v=3
+        resources:
+          requests:
+            cpu: "50m"
+        volumeMounts:
+        - name: scheduler-config
+          mountPath: /config
