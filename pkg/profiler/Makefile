@@ -13,10 +13,10 @@ copy-files:
 compile-cuda:
 	nvcc gpu_profiling.cpp -o bin/profiler
 
-build: create-bin compile-cuda copy-files build-client build-server 
+build: create-bin compile-cuda copy-files build-client
 
 docker-client:
-	docker build ./client_dockerfile -t $(REPO)/profiler_client:$(TAG)
+	docker build . -t $(REPO)/profiler_client:$(TAG)
 	docker push $(REPO)/profiler_client:$(TAG)
 	
 update:
