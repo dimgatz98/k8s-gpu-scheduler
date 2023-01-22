@@ -78,8 +78,9 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
 	}
 	utils.Check(err)
 	minUtil, maxFbFree := math.MaxInt, math.MinInt
+	// Fix this to take the same partition's metrics instead of the fittest for each metric
 	for _, response := range responses {
-		if strings.Contains(response.MetricName, "DCGM_FI_DEV_GPU_UTIL") {
+		if strings.Contains(response.MetricName, "DCGM_FI_PROF_GR_ENGINE_ACTIVE") {
 			value, err := strconv.Atoi(response.Value)
 			utils.Check(err)
 			if value < minUtil {
@@ -96,9 +97,7 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
 	}
 
 	score := 0
-	minUtilScore := int(10 / minUtil)
-	maxFbFreeScore := int(maxFbFree / 10)
-	score += maxFbFreeScore + minUtilScore
+	score += maxFbFree - maxFbFree*minUtil
 
 	klog.Info("Score for node {", nodeName, "} = ", score)
 	return int64(score), nil

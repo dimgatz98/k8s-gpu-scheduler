@@ -1,5 +1,5 @@
 [
-    {"query": "DCGM_FI_DEV_GPU_UTIL"},
+    {"query": "DCGM_FI_PROF_GR_ENGINE_ACTIVE"}, 
     {"query": "DCGM_FI_DEV_MEM_COPY_UTIL"},
     {"query": "DCGM_FI_DEV_GPU_TEMP"},
     {"query": "DCGM_FI_DEV_FB_USED"},

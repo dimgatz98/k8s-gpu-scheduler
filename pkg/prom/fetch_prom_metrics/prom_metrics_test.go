@@ -14,21 +14,21 @@ func fatal(t *testing.T, expected, got interface{}) {
 
 func Test_ParseResponse(t *testing.T) {
 	tt := []struct {
-		name        string
-		filename    string
-		expectedErr error
-		expected    []Response
+		name             string
+		filename         string
+		expectedErr      error
+		expectedResponse []Response
 	}{
 		{
-			name:     "Test_ParseResponse1",
-			filename: "",
-			expected: nil,
+			name:             "Test_ParseResponse1",
+			filename:         "",
+			expectedResponse: nil,
 		},
 		{
 			name:        "Test_ParseResponse2",
 			filename:    "../test_data/prom_response_mock.txt",
 			expectedErr: nil,
-			expected: []Response{
+			expectedResponse: []Response{
 				{
 					MetricName: "DCGM_FI_DEV_FB_FREE",
 					Exporter:   "dcgm-exporter-1673788700-8xg5s",
@@ -51,6 +51,12 @@ func Test_ParseResponse(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:             "Test_ParseResponse3",
+			filename:         "../test_data/empty_response.txt",
+			expectedErr:      nil,
+			expectedResponse: nil,
+		},
 	}
 	for i := range tt {
 		tc := tt[i]
@@ -66,8 +72,8 @@ func Test_ParseResponse(t *testing.T) {
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}
-			if !reflect.DeepEqual(got, tc.expected) {
-				fatal(t, tc.expected, got)
+			if !reflect.DeepEqual(got, tc.expectedResponse) {
+				fatal(t, tc.expectedResponse, got)
 			}
 		})
 	}

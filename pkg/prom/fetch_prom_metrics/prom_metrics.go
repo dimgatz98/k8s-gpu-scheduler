@@ -29,7 +29,9 @@ func ParseResponse(response []byte) (Responses []Response, err error) {
 		return nil, err
 	}
 	results := resp.(map[string]interface{})["data"].(map[string]interface{})["result"].([]interface{})
-
+	if len(results) == 0 {
+		return nil, nil
+	}
 	var metric_name, exporter, value string
 	var metric map[string]interface{}
 	for _, result := range results {
