@@ -16,13 +16,10 @@ import (
 var desc *client.Descriptor
 
 func main() {
-	var nodeName, podName, namespace, memFree, memTotal, smCount, uuids string
+	var nodeName, podName, namespace, uuids string
 	fmt.Scanln(&nodeName)
 	fmt.Scanln(&podName)
 	fmt.Scanln(&namespace)
-	fmt.Scanln(&memFree)
-	fmt.Scanln(&memTotal)
-	fmt.Scanln(&smCount)
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
 		uuids = scanner.Text()
