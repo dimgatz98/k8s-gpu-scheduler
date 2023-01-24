@@ -4,4 +4,4 @@ OUT="['GPU-ac0112df-7098-6c59-5c4f-a57fa666f808', 'MIG-7a700938-2114-5d88-a93c-1
 NODE_NAME=1
 POD_NAME=2
 POD_NAMESPACE=3
-echo -e "$NODE_NAME\n$POD_NAME\n$POD_NAMESPACE\n$(bin/profiler)\n$OUT" | go run cmd/client/client.go
+echo -e "$NODE_NAME\n$POD_NAME\n$POD_NAMESPACE\n$OUT" | go run cmd/client/client.go
