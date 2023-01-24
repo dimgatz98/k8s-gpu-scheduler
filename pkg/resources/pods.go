@@ -1,4 +1,4 @@
-package pods
+package resources
 
 import (
 	"context"
@@ -36,25 +36,27 @@ type (
 
 	Resources interface {
 		ListPods()
-		Patch(params *PatchPodParam)
-		AddEnv(podName string, env map[string]string) (result *v1.Pod, err error)
+		PatchPod(params *PatchPodParam)
 		Get(podName string) (result *v1.Pod, err error)
 		UpdateConfigMap(mapName string, data map[string]string) (ret *v1.ConfigMap, err error)
 		CreateConfigMap(mapName string, data map[string]string) (ret *v1.ConfigMap, err error)
 		AppendToExistingConfigMapsInPod(podName string, data map[string]string) (ret []*v1.ConfigMap, err error)
+		DeletePod(podName string, options metav1.DeleteOptions) error
 	}
 )
 
+var ctx = context.Background()
+
 func (r *Descriptor) ListPods() (*corev1.PodList, error) {
 	list, err := r.Clientset.CoreV1().Pods(r.Namespace).List(
-		context.TODO(),
+		ctx,
 		metav1.ListOptions{
 			FieldSelector: r.FieldSelector,
 		})
 	return list, err
 }
 
-func (r *Descriptor) Patch(params *PatchPodParam) (result *v1.Pod, err error) {
+func (r *Descriptor) PatchPod(params *PatchPodParam) (result *v1.Pod, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
 	operatorData := params.OperatorData
@@ -74,21 +76,21 @@ func (r *Descriptor) Patch(params *PatchPodParam) (result *v1.Pod, err error) {
 	}
 	payloadBytes, _ := json.Marshal(payloads)
 
-	result, err = coreV1.Pods(r.Namespace).Patch(context.TODO(), params.Pod, types.JSONPatchType, payloadBytes, metav1.PatchOptions{})
+	result, err = coreV1.Pods(r.Namespace).Patch(ctx, params.Pod, types.JSONPatchType, payloadBytes, metav1.PatchOptions{})
 	return result, err
 }
 
 func (r *Descriptor) Get(podName string) (result *v1.Pod, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
-	pod, err := coreV1.Pods(r.Namespace).Get(context.TODO(), podName, metav1.GetOptions{})
+	pod, err := coreV1.Pods(r.Namespace).Get(ctx, podName, metav1.GetOptions{})
 	return pod, err
 }
 
 func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string) (ret *v1.ConfigMap, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
-	cfgMap, err := coreV1.ConfigMaps(r.Namespace).Get(context.Background(), cfgMapName, metav1.GetOptions{})
+	cfgMap, err := coreV1.ConfigMaps(r.Namespace).Get(ctx, cfgMapName, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +98,7 @@ func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string) 
 	for key, value := range data {
 		cfgMap.Data[key] = value
 	}
-	ret, err = coreV1.ConfigMaps(r.Namespace).Update(context.Background(), cfgMap, metav1.UpdateOptions{})
+	ret, err = coreV1.ConfigMaps(r.Namespace).Update(ctx, cfgMap, metav1.UpdateOptions{})
 	return ret, err
 }
 
@@ -118,13 +120,13 @@ func (r *Descriptor) CreateConfigMap(mapName string, data map[string]string) (re
 	for key, value := range data {
 		cfgMap.Data[key] = value
 	}
-	ret, err = coreV1.ConfigMaps(r.Namespace).Create(context.Background(), &cfgMap, metav1.CreateOptions{})
+	ret, err = coreV1.ConfigMaps(r.Namespace).Create(ctx, &cfgMap, metav1.CreateOptions{})
 	return ret, err
 }
 
 func (r *Descriptor) GetConfigMap(cfgMapName string) (ret *v1.ConfigMap, err error) {
 	coreV1 := r.Clientset.CoreV1()
-	ret, err = coreV1.ConfigMaps(r.Namespace).Get(context.Background(), cfgMapName, metav1.GetOptions{})
+	ret, err = coreV1.ConfigMaps(r.Namespace).Get(ctx, cfgMapName, metav1.GetOptions{})
 	return ret, err
 }
 
@@ -162,6 +164,12 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[st
 	return ret, err
 }
 
+func (r *Descriptor) DeletePod(podName string, options metav1.DeleteOptions) error {
+	coreV1 := r.Clientset.CoreV1()
+	err := coreV1.Pods(r.Namespace).Delete(ctx, podName, options)
+	return err
+}
+
 func KeyExists(key string, m map[string]string) bool {
 	for k := range m {
 		if key == k {
@@ -171,23 +179,25 @@ func KeyExists(key string, m map[string]string) bool {
 	return false
 }
 
-func New(namespace string, fieldSelector string, configPath string) (r *Descriptor, err error) {
-	var config *rest.Config
-	if configPath == "" {
-		config, err = rest.InClusterConfig()
-		if err != nil {
-			return nil, err
+func New(namespace string, fieldSelector string, configPath string, clientset *kubernetes.Clientset) (r *Descriptor, err error) {
+	if clientset == nil {
+		var config *rest.Config
+		if configPath == "" {
+			config, err = rest.InClusterConfig()
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			config, err = clientcmd.BuildConfigFromFlags("", "/home/dimitris/.kube/config")
+			if err != nil {
+				return nil, err
+			}
 		}
-	} else {
-		config, err = clientcmd.BuildConfigFromFlags("", "/home/dimitris/.kube/config")
-		if err != nil {
-			return nil, err
-		}
-	}
 
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, err
+		clientset, err = kubernetes.NewForConfig(config)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &Descriptor{

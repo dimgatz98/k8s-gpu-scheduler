@@ -1,52 +1,25 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"k8s-gpu-scheduler/pkg/pods"
 	"k8s-gpu-scheduler/pkg/redis/client"
+	"k8s-gpu-scheduler/utils"
 	"log"
 	"os"
-	"strings"
 
 	"github.com/akamensky/argparse"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 )
 
-func FindNodesIP(podNameContains string, namespace string, fieldSelector string) (string, error) {
-	desc, err := pods.New(namespace, fieldSelector, "/home/dimitris/.kube/config")
-	if err != nil {
-		return "", err
-	}
-	podsList, err := desc.ListPods()
-	if err != nil {
-		return "", err
-	}
-
-	var url string
-	for _, pod := range podsList.Items {
-		if strings.Contains(pod.GetName(), podNameContains) {
-			promNode, err := desc.Clientset.CoreV1().Nodes().Get(
-				context.TODO(),
-				pod.Spec.NodeName,
-				metav1.GetOptions{},
-			)
-			if err != nil {
-				return "", err
-			}
-			url = promNode.Status.Addresses[0].Address
-			break
-		}
-	}
-	return url, nil
-}
-
 func main() {
-	parser := argparse.NewParser("Profiler", "Send profile gpu profiling data to gRPC server")
+	parser := argparse.NewParser("Redis control", "List and/or flush redis data")
 
 	flush := parser.Flag("f", "flush", &argparse.Options{Default: false, Help: "Flush redis database"})
 	list := parser.Flag("l", "list", &argparse.Options{Default: false, Help: "List redis' data"})
+	configPath := parser.String("c", "config", &argparse.Options{Default: "/home/dimitris/.kube/config", Help: "Kubernetes config path"})
 
 	// Parse arguments
 	err := parser.Parse(os.Args)
@@ -55,9 +28,24 @@ func main() {
 		panic(err)
 	}
 
-	redisUrl, err := FindNodesIP("-0", "redis", "")
+	var config *rest.Config
+	config, err = clientcmd.BuildConfigFromFlags("", *configPath)
+	if err != nil {
+		log.Fatal("Error: ", err)
+	}
+
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatal("Error: ", err)
+	}
+
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
+	}
+	var redisUrl string
+	for _, value := range redisUrls[0] {
+		redisUrl = value
 	}
 
 	desc := client.New(redisUrl+":32767", "1234", 0)

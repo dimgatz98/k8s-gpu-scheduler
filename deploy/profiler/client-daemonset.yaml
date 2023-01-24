@@ -17,7 +17,7 @@ spec:
       serviceAccount: profiler-sa
       containers:
       - name: profiler-client
-        image: tzourhs/profiler_client:1.14
+        image: tzourhs/profiler_client:1.21
         imagePullPolicy: IfNotPresent
         command:
         - /bin/bash

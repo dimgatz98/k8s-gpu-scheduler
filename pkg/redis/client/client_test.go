@@ -16,7 +16,7 @@ func fatal(t *testing.T, expected, got interface{}) {
 	t.Fatalf(`expected: %v, got: %v`, expected, got)
 }
 
-func Test_ParseResponse(t *testing.T) {
+func Test_Redis(t *testing.T) {
 	tt := []struct {
 		name                 string
 		function             string

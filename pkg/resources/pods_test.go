@@ -1,4 +1,4 @@
-package pods
+package resources
 
 import (
 	"errors"
@@ -10,7 +10,7 @@ func fatal(t *testing.T, expected, got interface{}) {
 	t.Fatalf(`expected: %v, got: %v`, expected, got)
 }
 
-func Test_ParseResponse(t *testing.T) {
+func Test_Resources(t *testing.T) {
 	tt := []struct {
 		namespace        string
 		name             string
@@ -30,7 +30,7 @@ func Test_ParseResponse(t *testing.T) {
 		tc := tt[i]
 
 		t.Run(tc.name, func(t *testing.T) {
-			desc, err := New("", "", "/home/dimitris/.kube/config")
+			desc, err := New("", "", "/home/dimitris/.kube/config", nil)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}
@@ -38,7 +38,6 @@ func Test_ParseResponse(t *testing.T) {
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}
-
 		})
 	}
 }

@@ -29,14 +29,29 @@ func main() {
 	uuids = strings.ReplaceAll(uuids, "[", "")
 	uuids = strings.ReplaceAll(uuids, "]", "")
 	uuidSlice := strings.Split(uuids, ",")
+	// If GPU is MIG enabled maintain only MIG uuids
+	if utils.Exists(uuidSlice, "MIG") != -1 {
+		newUuids := []string{}
+		for _, uuid := range uuidSlice {
+			if strings.Contains(uuid, "MIG") {
+				newUuids = append(newUuids, uuid)
+			}
+		}
+		uuidSlice = newUuids
+	}
 	klog.Info("UUIDs: ", uuidSlice)
 
 	// Set node's UUIDs in redis
-	redisUrl, err := utils.FindNodesIP("-0", "redis", "")
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", nil)
 	if err != nil {
 		log.Fatal("Error in FindNodesIP() in profiler client: ", err.Error())
 	}
-	// Add redis password in a secret or environment variable and load from there
+	var redisUrl string
+	for _, value := range redisUrls[0] {
+		redisUrl = value
+	}
+
+	// Add redis port and password in a k8s secret
 	desc = client.New(redisUrl+":32767", "1234", 0)
 	byteArray, err := json.Marshal(uuidSlice)
 	if err != nil {

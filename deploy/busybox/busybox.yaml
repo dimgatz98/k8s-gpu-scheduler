@@ -5,7 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: busybox
 spec:
-  replicas: 4
+  replicas: 1
   selector:
     matchLabels:
       app: busybox
@@ -18,8 +18,11 @@ spec:
       containers:
       - image: busybox:latest
         imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            nvidia.com/gpu: 1
         envFrom:
         - configMapRef:
-          name: game-demo
+            name: game-demo
         name: busybox
         command: ["sleep", "3600"]

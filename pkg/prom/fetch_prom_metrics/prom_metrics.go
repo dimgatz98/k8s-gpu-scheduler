@@ -16,6 +16,7 @@ type Response struct {
 	MetricName string
 	Exporter   string
 	Value      string
+	GPU_I_ID   string
 }
 
 func ParseResponse(response []byte) (Responses []Response, err error) {
@@ -32,14 +33,22 @@ func ParseResponse(response []byte) (Responses []Response, err error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
-	var metric_name, exporter, value string
+	var metric_name, exporter, value, gpuID string
 	var metric map[string]interface{}
 	for _, result := range results {
 		value = result.(map[string]interface{})["value"].([]interface{})[1].(string)
 		metric = result.(map[string]interface{})["metric"].(map[string]interface{})
 		metric_name = metric["__name__"].(string)
+
+		val, ok := metric["GPU_I_ID"]
+		if ok {
+			gpuID = val.(string)
+		} else {
+			gpuID = ""
+		}
+
 		exporter = metric["pod"].(string)
-		Responses = append(Responses, Response{MetricName: metric_name, Value: value, Exporter: exporter})
+		Responses = append(Responses, Response{MetricName: metric_name, Value: value, Exporter: exporter, GPU_I_ID: gpuID})
 	}
 	return Responses, nil
 }
