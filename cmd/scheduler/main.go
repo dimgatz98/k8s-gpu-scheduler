@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	gpuPlugin "k8s-gpu-scheduler/pkg/plugins/gpu_plugin"
+	gpuPlugin "github.com/dimgatz98/k8s-gpu-scheduler/pkg/plugins/gpu_plugin"
 
 	"k8s.io/component-base/logs"
 	"k8s.io/kubernetes/cmd/kube-scheduler/app"

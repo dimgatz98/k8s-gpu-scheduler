@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"k8s-gpu-scheduler/pkg/prom/requests"
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/prom/requests"
 
 	"k8s.io/klog/v2"
 )

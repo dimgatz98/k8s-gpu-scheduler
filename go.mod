@@ -1,4 +1,4 @@
-module k8s-gpu-scheduler
+module github.com/dimgatz98/k8s-gpu-scheduler
 
 go 1.16
 

@@ -2,8 +2,9 @@ package utils
 
 import (
 	"context"
-	"k8s-gpu-scheduler/pkg/resources"
 	"strings"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/resources"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

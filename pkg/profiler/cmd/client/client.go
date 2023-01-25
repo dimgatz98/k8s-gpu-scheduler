@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"k8s-gpu-scheduler/pkg/redis/client"
-	"k8s-gpu-scheduler/utils"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/redis/client"
 
 	"k8s.io/klog/v2"
 )

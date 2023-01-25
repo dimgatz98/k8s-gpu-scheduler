@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"k8s-gpu-scheduler/pkg/redis/client"
-	"k8s-gpu-scheduler/pkg/resources"
-	"k8s-gpu-scheduler/utils"
+	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/resources"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/redis/client"
+
+	promMetrics "github.com/dimgatz98/k8s-gpu-scheduler/pkg/prom/fetch_prom_metrics"
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
@@ -68,73 +72,71 @@ func (g *GPU) ScoreExtensions() framework.ScoreExtensions {
 }
 
 func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
-	// var err error
-	// clientset, err = utils.CheckClientset(clientset)
-	// if err != nil {
-	// 	klog.Fatal("Error in utils.CheckClientset() in score: ", err)
-	// }
+	var err error
+	clientset, err = utils.CheckClientset(clientset)
+	if err != nil {
+		klog.Fatal("Error in utils.CheckClientset() in score: ", err)
+	}
 
-	// nodeName := nodeInfo.Node().GetName()
-	// klog.Info("Scoring node: ", nodeName)
+	nodeName := nodeInfo.Node().GetName()
+	klog.Info("Scoring node: ", nodeName)
 
-	// dcgmPod, err := utils.GetNodesDcgmPod(nodeName, clientset)
-	// utils.Check(err)
+	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, clientset)
+	utils.Check(err)
 
-	// // Get prometheus node's IP
-	// promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset)
-	// utils.Check(err)
-	// if promUrls == nil {
-	// 	klog.Fatal("Prometheus not found")
-	// }
-	// var promUrl string
-	// for _, value := range promUrls[0] {
-	// 	promUrl = value
-	// 	break
-	// }
+	// Get prometheus node's IP
+	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset)
+	utils.Check(err)
+	if promUrls == nil {
+		klog.Fatal("Prometheus not found")
+	}
+	var promUrl string
+	for _, value := range promUrls[0] {
+		promUrl = value
+		break
+	}
 
-	// // Fetch DCGM data and score node based on the data
-	// responses, err := promMetrics.DcgmPromInstantQuery("http://"+promUrl+":30090/", "{pod=\""+dcgmPod+"\"}")
-	// if responses == nil {
-	// 	return 0, nil
-	// }
-	// utils.Check(err)
-	// metrics := make(map[string]map[string]float32)
-	// for _, response := range responses {
-	// 	var key string
-	// 	if response.GPU_I_ID != "" {
-	// 		key = response.GPU_I_ID
-	// 	} else {
-	// 		key = "NOT_MIG"
-	// 	}
-	// 	value, err := strconv.ParseFloat(response.Value, 32)
-	// 	utils.Check(err)
-	// 	if _, found := metrics[key]; !found {
-	// 		metrics[key] = map[string]float32{}
-	// 	}
-	// 	metrics[key][response.MetricName] = float32(value)
-	// 	klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
-	// }
+	// Fetch DCGM data and score node based on the data
+	responses, err := promMetrics.DcgmPromInstantQuery("http://"+promUrl+":30090/", "{pod=\""+dcgmPod+"\"}")
+	if responses == nil {
+		return 0, nil
+	}
+	utils.Check(err)
+	metrics := make(map[string]map[string]float32)
+	for _, response := range responses {
+		var key string
+		if response.GPU_I_ID != "" {
+			key = response.GPU_I_ID
+		} else {
+			key = "NOT_MIG"
+		}
+		value, err := strconv.ParseFloat(response.Value, 32)
+		utils.Check(err)
+		if _, found := metrics[key]; !found {
+			metrics[key] = map[string]float32{}
+		}
+		metrics[key][response.MetricName] = float32(value)
+		klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
+	}
 
-	// score := framework.MinNodeScore
-	// for _, value := range metrics {
-	// 	var util, fbFree float32 = 1, 0
-	// 	for metricName, metric := range value {
-	// 		if metricName == "DCGM_FI_PROF_GR_ENGINE_ACTIVE" {
-	// 			util = metric
-	// 		} else if metricName == "DCGM_FI_DEV_FB_FREE" {
-	// 			fbFree = metric
-	// 		}
-	// 	}
-	// 	tmpScore := int64(fbFree - fbFree*util)
-	// 	if tmpScore > score {
-	// 		score = tmpScore
-	// 	}
-	// }
+	score := framework.MinNodeScore
+	for _, value := range metrics {
+		var util, fbFree float32 = 1, 0
+		for metricName, metric := range value {
+			if metricName == "DCGM_FI_PROF_GR_ENGINE_ACTIVE" {
+				util = metric
+			} else if metricName == "DCGM_FI_DEV_FB_FREE" {
+				fbFree = metric
+			}
+		}
+		tmpScore := int64(fbFree - fbFree*util)
+		if tmpScore > score {
+			score = tmpScore
+		}
+	}
 
-	// klog.Info("Score for node {", nodeName, "} = ", score)
-	// return int64(score), nil
-
-	return int64(rand.Intn(100)), nil
+	klog.Info("Score for node {", nodeName, "} = ", score)
+	return int64(score), nil
 }
 
 func (g *GPU) NormalizeScore(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, scores framework.NodeScoreList) *framework.Status {

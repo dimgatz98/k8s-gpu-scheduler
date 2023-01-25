@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
-	"k8s-gpu-scheduler/pkg/redis/client"
-	"k8s-gpu-scheduler/utils"
 	"log"
 	"os"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
+
+	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/redis/client"
 
 	"github.com/akamensky/argparse"
 	"k8s.io/client-go/kubernetes"

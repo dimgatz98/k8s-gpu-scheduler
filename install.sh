@@ -1,6 +1,7 @@
 #!/bin/bash
 
-root=$PWD
+parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+cd $parent_path
 
 # Apply redis
 kubectl apply -f ./deploy/redis
