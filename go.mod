@@ -57,6 +57,8 @@ replace k8s.io/sample-controller => k8s.io/sample-controller v0.21.0
 require (
 	github.com/akamensky/argparse v1.4.0
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/golang/protobuf v1.5.2
+	google.golang.org/grpc v1.27.1
 	k8s.io/api v0.21.0
 	k8s.io/apimachinery v0.21.0
 	k8s.io/client-go v0.21.0

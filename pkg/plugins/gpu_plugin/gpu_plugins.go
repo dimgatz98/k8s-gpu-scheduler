@@ -25,6 +25,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
+
+	grpcClient "github.com/dimgatz98/k8s-gpu-scheduler/pkg/recommender/go_client/pkg"
+	grpc "github.com/dimgatz98/k8s-gpu-scheduler/pkg/recommender/go_client/utils"
 )
 
 type GPU struct {
@@ -64,22 +67,51 @@ func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev
 		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("getting node %q from Snapshot: %v", nodeName, err))
 	}
 
-	return g.score(nodeInfo)
+	return g.score(nodeInfo, pod)
 }
 
 func (g *GPU) ScoreExtensions() framework.ScoreExtensions {
 	return g
 }
 
-func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
+func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *framework.Status) {
 	var err error
+	var score int64 = framework.MinNodeScore
+
 	clientset, err = utils.CheckClientset(clientset)
 	if err != nil {
 		klog.Fatal("Error in utils.CheckClientset() in score: ", err)
 	}
 
+	// Find recommender node's IP
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset)
+	utils.Check(err)
+	if recommenderIPs == nil {
+		klog.Fatal("recommender not found")
+	}
+	var recommenderIP string
+	for _, value := range recommenderIPs[0] {
+		recommenderIP = value
+		break
+	}
+
 	nodeName := nodeInfo.Node().GetName()
 	klog.Info("Scoring node: ", nodeName)
+
+	// Looking for recommendations
+	response, err := grpcClient.Call(recommenderIP+":32700", pod.GetName())
+	if err != nil {
+		klog.Fatal("Error in grpcClient.Call(): ", err)
+	}
+
+	// Replace A30 with nodeName
+	score = int64(grpc.FindMaxIndForNode("A30", response))
+	// If recommendation is found, return
+	if score != 0 {
+		klog.Info("recommender's score: ", score)
+		return score, nil
+	}
+	klog.Info("recommenders score equal to zero")
 
 	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, clientset)
 	utils.Check(err)
@@ -119,7 +151,36 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
 		klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
 	}
 
-	score := framework.MinNodeScore
+	// // Get redis data
+	// redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
+	// if err != nil {
+	// 	klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
+	// }
+	// if redisUrls == nil {
+	// 	klog.Fatal("Redis not found")
+	// }
+	// var redisUrl string
+	// for _, value := range redisUrls[0] {
+	// 	redisUrl = value
+	// }
+	// // Add redis port and password in k8s secret
+	// redisDesc := client.New(redisUrl+":32767", "1234", 0)
+
+	// if err != nil {
+	// 	klog.Fatal("Error in utils.CheckClientset() in PostBind: ", err)
+	// }
+
+	// val, err := redisDesc.Get(nodeName)
+	// if err != nil {
+	// 	klog.Fatal("Error occured in redis.Get() in PostBind: ", err)
+	// }
+	// var tmpUuids []string
+	// json.Unmarshal([]byte(val), &tmpUuids)
+	// isMig := utils.Exists(tmpUuids, "MIG")
+	// if err != nil {
+	// 	klog.Fatal("Error occured in utils.Exists() in PostBind: ", err)
+	// }
+
 	for _, value := range metrics {
 		var util, fbFree float32 = 1, 0
 		for metricName, metric := range value {
@@ -137,6 +198,7 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo) (int64, *framework.Status) {
 
 	klog.Info("Score for node {", nodeName, "} = ", score)
 	return int64(score), nil
+
 }
 
 func (g *GPU) NormalizeScore(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, scores framework.NodeScoreList) *framework.Status {
@@ -299,7 +361,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 		klog.Info("Redis Set() failed in PostBind: ", err.Error())
 	}
 
-	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it get into pod's env
+	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
 	podDesc, err := resources.New(p.GetNamespace(), "", "", clientset)
 	if err != nil {
 		klog.Info("Pods.New() failed in PostBind: ", err.Error())
@@ -314,7 +376,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 		},
 	)
 	if err != nil {
-		klog.Info("AddToExistingConfigMapsInPod() failed in PostBind: ", err.Error())
+		klog.Info("AppendToExistingConfigMapsInPod() failed in PostBind: ", err.Error())
 	}
 }
 

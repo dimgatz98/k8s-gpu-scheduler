@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package recommender;
+
+service Recommender {
+	rpc Impute (Request) returns (Reply);
+}
+
+message Request {
+  string index = 1;
+}
+
+message Reply {
+  repeated float result = 1;
+  repeated string columns = 2;
+}
