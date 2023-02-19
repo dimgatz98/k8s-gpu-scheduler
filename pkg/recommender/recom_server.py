@@ -28,7 +28,7 @@ configurations_prev_version = None
 terminate = False
 
 configurations_path = os.getenv(
-    "CONFIGURATION_DATA_PATH", default="recommender/configurations_train.ods"
+    "CONFIGURATIONS_DATA_PATH", default="recommender/configurations_train.ods"
 )
 
 
