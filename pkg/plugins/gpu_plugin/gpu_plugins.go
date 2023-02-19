@@ -99,7 +99,7 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 	klog.Info("Scoring node: ", nodeName)
 
 	// Looking for recommendations
-	response, err := grpcClient.Call(recommenderIP+":32700", pod.GetName())
+	response, err := grpcClient.ImputeConfigurations(recommenderIP+":32700", pod.GetName())
 	if err != nil {
 		klog.Fatal("Error in grpcClient.Call(): ", err)
 	}

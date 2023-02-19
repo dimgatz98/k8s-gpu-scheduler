@@ -9,7 +9,7 @@ import (
 
 func main() {
 
-	response, err := client.Call("172.20.0.3:32700", "onnx_mobilenet_1024")
+	response, err := client.ImputeConfigurations("172.20.0.3:32700", "onnx_mobilenet_1024")
 	if err != nil {
 		log.Fatalln("Error : ", err)
 	}
