@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/resources"
 
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,18 +20,22 @@ func Check(e error) {
 	}
 }
 
-func FindNodeFromPod(podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset) ([]*v1.Node, error) {
+func FindNodeFromPod(podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList *v1.PodList) ([]*v1.Node, error) {
 	desc, err := resources.New(namespace, fieldSelector, "", clientset)
 	if err != nil {
 		return nil, err
 	}
-	podsList, err := desc.ListPods()
-	if err != nil {
-		return nil, err
+
+	if podList == nil {
+
+		podList, err = desc.ListPods()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	nodes := []*v1.Node{}
-	for _, pod := range podsList.Items {
+	for _, pod := range podList.Items {
 		if strings.Contains(pod.GetName(), podNameContains) {
 			node, err := desc.Clientset.CoreV1().Nodes().Get(
 				context.TODO(),
@@ -46,8 +51,8 @@ func FindNodeFromPod(podNameContains string, namespace string, fieldSelector str
 	return nodes, nil
 }
 
-func FindNodesIPFromPod(podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset) ([]map[string]string, error) {
-	nodes, err := FindNodeFromPod(podNameContains, namespace, fieldSelector, clientset)
+func FindNodesIPFromPod(podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList *v1.PodList) ([]map[string]string, error) {
+	nodes, err := FindNodeFromPod(podNameContains, namespace, fieldSelector, clientset, podList)
 	if err != nil {
 		return nil, err
 	}
@@ -59,15 +64,20 @@ func FindNodesIPFromPod(podNameContains string, namespace string, fieldSelector 
 	return urls, nil
 }
 
-func GetNodesDcgmPod(nodeName string, clientset *kubernetes.Clientset) (string, error) {
-	desc, err := resources.New("", "spec.nodeName="+nodeName, "", clientset)
-	if err != nil {
-		return "", nil
+func GetNodesDcgmPod(nodeName string, podsList *v1.PodList, clientset *kubernetes.Clientset) (string, error) {
+
+	if podsList == nil {
+		desc, err := resources.New("", "spec.nodeName="+nodeName, "", clientset)
+		if err != nil {
+			return "", err
+		}
+
+		podsList, err = desc.ListPods()
+		if err != nil {
+			return "", err
+		}
 	}
-	podsList, err := desc.ListPods()
-	if err != nil {
-		return "", nil
-	}
+
 	var dcgmPod string
 	for _, pod := range podsList.Items {
 		if strings.Contains(pod.GetName(), "dcgm") {
@@ -104,4 +114,14 @@ func CheckClientset(clientset *kubernetes.Clientset) (*kubernetes.Clientset, err
 		}
 	}
 	return clientset, nil
+}
+
+func GetEnv(pod *corev1.Pod, name string) (value string) {
+	for _, envFrom := range pod.Spec.Containers[0].Env {
+		if envFrom.Name == name {
+			value = envFrom.Value
+			break
+		}
+	}
+	return value
 }

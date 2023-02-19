@@ -84,7 +84,7 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 	}
 
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset)
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, nil)
 	utils.Check(err)
 	if recommenderIPs == nil {
 		klog.Fatal("recommender not found")
@@ -113,11 +113,11 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 	}
 	klog.Info("recommenders score equal to zero")
 
-	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, clientset)
+	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, nil, clientset)
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset)
+	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset, nil)
 	utils.Check(err)
 	if promUrls == nil {
 		klog.Fatal("Prometheus not found")
@@ -151,6 +151,24 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 		klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
 	}
 
+	for _, value := range metrics {
+		var util, fbFree float32 = 1, 0
+		for metricName, metric := range value {
+			if metricName == "DCGM_FI_PROF_GR_ENGINE_ACTIVE" {
+				util = metric
+			} else if metricName == "DCGM_FI_DEV_FB_FREE" {
+				fbFree = metric
+			}
+		}
+		tmpScore := int64(fbFree - fbFree*util)
+		if tmpScore > score {
+			score = tmpScore
+		}
+	}
+
+	klog.Info("Score for node {", nodeName, "} = ", score)
+	return int64(score), nil
+
 	// // Get redis data
 	// redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
 	// if err != nil {
@@ -180,25 +198,6 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 	// if err != nil {
 	// 	klog.Fatal("Error occured in utils.Exists() in PostBind: ", err)
 	// }
-
-	for _, value := range metrics {
-		var util, fbFree float32 = 1, 0
-		for metricName, metric := range value {
-			if metricName == "DCGM_FI_PROF_GR_ENGINE_ACTIVE" {
-				util = metric
-			} else if metricName == "DCGM_FI_DEV_FB_FREE" {
-				fbFree = metric
-			}
-		}
-		tmpScore := int64(fbFree - fbFree*util)
-		if tmpScore > score {
-			score = tmpScore
-		}
-	}
-
-	klog.Info("Score for node {", nodeName, "} = ", score)
-	return int64(score), nil
-
 }
 
 func (g *GPU) NormalizeScore(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, scores framework.NodeScoreList) *framework.Status {
@@ -232,7 +231,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	var err error
 	clientset, err = utils.CheckClientset(clientset)
 
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}
@@ -346,17 +345,27 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	// 		pass
 	// }
 
-	pod := Pod{Name: p.GetName(), Namespace: p.GetNamespace()}
 	node := BoundNode{Name: nodeName, UUID: uuid}
-	podByteArray, err := json.Marshal(pod)
+	gpuByteArray, err := json.Marshal(node)
 	if err != nil {
 		klog.Info("json.Marshal() failed in PostBind: ", err.Error())
 	}
-	nodeByteArray, err := json.Marshal(node)
+
+	collocatedPods, err := redisDesc.Get(string(gpuByteArray))
+	if err != nil {
+		klog.Info("error in redisDesc.Get(string(gpuByteArray)) in Logic(): ", err)
+	}
+	podList := []Pod{}
+	if collocatedPods != "" {
+		json.Unmarshal([]byte(collocatedPods), &podList)
+	}
+	podList = append(podList, Pod{Name: p.GetName(), Namespace: p.GetNamespace()})
+	podListByteArray, err := json.Marshal(podList)
 	if err != nil {
 		klog.Info("json.Marshal() failed in PostBind: ", err.Error())
 	}
-	err = redisDesc.Set(string(podByteArray), string(nodeByteArray))
+
+	err = redisDesc.Set(string(gpuByteArray), string(podListByteArray))
 	if err != nil {
 		klog.Info("Redis Set() failed in PostBind: ", err.Error())
 	}

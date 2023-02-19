@@ -17,6 +17,7 @@ type Response struct {
 	Exporter   string
 	Value      string
 	GPU_I_ID   string
+	UUID       string
 }
 
 func ParseResponse(response []byte) (Responses []Response, err error) {
@@ -33,7 +34,7 @@ func ParseResponse(response []byte) (Responses []Response, err error) {
 	if len(results) == 0 {
 		return nil, nil
 	}
-	var metric_name, exporter, value, gpuID string
+	var metric_name, exporter, value, gpuID, uuid string
 	var metric map[string]interface{}
 	for _, result := range results {
 		value = result.(map[string]interface{})["value"].([]interface{})[1].(string)
@@ -47,14 +48,22 @@ func ParseResponse(response []byte) (Responses []Response, err error) {
 			gpuID = ""
 		}
 
+		val, ok = metric["UUID"]
+		if ok {
+			uuid = val.(string)
+		} else {
+			uuid = ""
+		}
+
 		exporter = metric["pod"].(string)
-		Responses = append(Responses, Response{MetricName: metric_name, Value: value, Exporter: exporter, GPU_I_ID: gpuID})
+		Responses = append(Responses, Response{MetricName: metric_name, Value: value, Exporter: exporter, GPU_I_ID: gpuID, UUID: uuid})
 	}
 	return Responses, nil
 }
 
 func DcgmPromInstantQuery(url string, filter string) ([]Response, error) {
 	var params []map[string]string
+
 	data, err := os.ReadFile("/scheduler/pkg/prom/fetch_prom_metrics/metrics.json")
 	if err != nil {
 		return nil, err

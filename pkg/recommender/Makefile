@@ -1,11 +1,11 @@
 REPO=tzourhs
-TAG=0.7
+TAG=0.9
 IMAGE=recommender
 
 all: install image-build image-push
 
 install:
-	pip install -r requirements.txt
+	pip install -r requirements.txt --user
 
 docker: image-build image-push
 

@@ -23,3 +23,6 @@ spec:
             name: game-demo
         name: busybox
         command: ["sleep", "3600"]
+        env:
+        - name: SLO
+          value: "10"

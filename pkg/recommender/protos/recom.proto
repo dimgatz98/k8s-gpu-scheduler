@@ -2,8 +2,9 @@ syntax = "proto3";
 
 package recommender;
 
-service Recommender {
-	rpc Impute (Request) returns (Reply);
+service recommender {
+	rpc ImputeConfigurations (Request) returns (Reply);
+  rpc ImputeInterference (Request) returns (Reply);
 }
 
 message Request {

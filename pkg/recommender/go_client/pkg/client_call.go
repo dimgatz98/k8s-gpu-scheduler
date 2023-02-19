@@ -18,6 +18,6 @@ func Call(url string, index string) (reply *recommender.Reply, err error) {
 
 	c := recommender.NewRecommenderClient(conn)
 
-	response, err := c.Impute(context.Background(), &recommender.Request{Index: index})
+	response, err := c.ImputeConfigurations(context.Background(), &recommender.Request{Index: index})
 	return response, err
 }

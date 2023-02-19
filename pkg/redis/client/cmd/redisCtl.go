@@ -41,7 +41,7 @@ func main() {
 		log.Fatal("Error: ", err)
 	}
 
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}

@@ -44,7 +44,7 @@ func main() {
 	klog.Info("UUIDs: ", uuidSlice)
 
 	// Set node's UUIDs in redis
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", nil)
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", nil, nil)
 	if err != nil {
 		log.Fatal("Error in FindNodesIP() in profiler client: ", err.Error())
 	}

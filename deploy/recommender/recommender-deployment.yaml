@@ -50,10 +50,12 @@ spec:
       hostNetwork: True
       containers:
       - name: recommender-container
-        image: tzourhs/recommender:0.7
+        image: tzourhs/recommender:0.9
         env:
-        - name: DATA_PATH
-          value: "/recommender/recommender/train.ods"
+        - name: CONFIGURATIONS_DATA_PATH
+          value: "/recommender/recommender/configurations_train.ods"
+        - name: INTERFERENCE_DATA_PATH
+          value: "/recommender/recommender/interference_train.ods"
         - name: PORT
           value: "50051"
         args: []

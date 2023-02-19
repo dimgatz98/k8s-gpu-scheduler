@@ -118,18 +118,20 @@ func init() {
 func init() { proto.RegisterFile("protos/recom.proto", fileDescriptor_485ef8a31f14cdfe) }
 
 var fileDescriptor_485ef8a31f14cdfe = []byte{
-	// 164 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x5c, 0xce, 0x3f, 0x0b, 0x82, 0x40,
-	0x18, 0xc7, 0x71, 0x54, 0x54, 0x7c, 0xdc, 0x1e, 0x24, 0x8e, 0x96, 0xc4, 0xc9, 0xc9, 0xc0, 0xa6,
-	0xc6, 0xc6, 0xd6, 0xe7, 0x25, 0xa4, 0xcf, 0x10, 0xdc, 0x79, 0xd7, 0xfd, 0x81, 0x7c, 0xf7, 0xc1,
-	0x65, 0x14, 0x8d, 0x9f, 0xdf, 0xf2, 0xfb, 0x02, 0x1a, 0xab, 0xbd, 0x76, 0x47, 0xcb, 0x93, 0x56,
-	0x43, 0x04, 0xd6, 0x11, 0x8a, 0x97, 0x99, 0x6d, 0x77, 0x80, 0x92, 0xf8, 0x11, 0xd8, 0x79, 0x6c,
-	0x20, 0xbf, 0x2f, 0x33, 0x3f, 0x45, 0xd2, 0x26, 0x7d, 0x45, 0x6f, 0x74, 0x67, 0xc8, 0x89, 0x8d,
-	0x5c, 0x71, 0x07, 0x85, 0x65, 0x17, 0xa4, 0x17, 0x49, 0x9b, 0xf5, 0x29, 0x6d, 0x42, 0x01, 0xe5,
-	0xa4, 0x65, 0x50, 0x8b, 0x13, 0x69, 0x9b, 0xf5, 0x15, 0x7d, 0x38, 0x5e, 0xa0, 0xa6, 0xef, 0x15,
-	0x8e, 0x50, 0x5c, 0x95, 0x09, 0x9e, 0xb1, 0x19, 0x7e, 0x12, 0x86, 0xed, 0x7f, 0x8f, 0x7f, 0xab,
-	0x91, 0xeb, 0xad, 0x88, 0xc9, 0xa7, 0x57, 0x00, 0x00, 0x00, 0xff, 0xff, 0xf0, 0x69, 0xad, 0x3a,
-	0xc8, 0x00, 0x00, 0x00,
+	// 195 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0xd0, 0xbd, 0x8a, 0x83, 0x40,
+	0x10, 0x07, 0x70, 0x56, 0x51, 0x71, 0xae, 0x1b, 0xe4, 0x58, 0xae, 0x39, 0xb1, 0xb2, 0xf2, 0xe0,
+	0x52, 0xa5, 0x09, 0x81, 0x54, 0xb6, 0xfb, 0x06, 0x89, 0x8e, 0x41, 0x70, 0x77, 0xcd, 0x7e, 0x40,
+	0xf2, 0x14, 0x79, 0xe5, 0x10, 0x35, 0x20, 0xa9, 0x52, 0xfe, 0x86, 0xf9, 0xf8, 0x33, 0x80, 0xa3,
+	0xd1, 0x4e, 0xdb, 0x3f, 0x43, 0x8d, 0x96, 0xd5, 0x04, 0xfc, 0x9a, 0x20, 0x49, 0xb5, 0x64, 0x8a,
+	0x5f, 0x48, 0x04, 0x5d, 0x3c, 0x59, 0x87, 0x19, 0x44, 0xbd, 0x6a, 0xe9, 0xca, 0x59, 0xce, 0xca,
+	0x54, 0xcc, 0x28, 0xb6, 0x10, 0x09, 0x1a, 0x87, 0x1b, 0x7e, 0x43, 0x6c, 0xc8, 0xfa, 0xc1, 0x71,
+	0x96, 0x87, 0x65, 0x20, 0x16, 0x21, 0x87, 0xa4, 0xd1, 0x83, 0x97, 0xca, 0xf2, 0x20, 0x0f, 0xcb,
+	0x54, 0xbc, 0xf8, 0x7f, 0x67, 0xb0, 0xbe, 0x85, 0x7b, 0xc8, 0x6a, 0x39, 0x7a, 0x47, 0x07, 0xad,
+	0xba, 0xfe, 0xec, 0xcd, 0xd1, 0xf5, 0x5a, 0x59, 0xcc, 0xaa, 0x55, 0x57, 0xb5, 0xc4, 0xf9, 0xc1,
+	0xb7, 0xea, 0x33, 0xc3, 0x0e, 0x70, 0xde, 0x50, 0x2b, 0x47, 0xa6, 0x23, 0x43, 0xaa, 0xa1, 0xcf,
+	0xe7, 0x4f, 0xf1, 0xf4, 0x81, 0xcd, 0x23, 0x00, 0x00, 0xff, 0xff, 0x74, 0x16, 0xe8, 0x14, 0x17,
+	0x01, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -144,7 +146,8 @@ const _ = grpc.SupportPackageIsVersion4
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type RecommenderClient interface {
-	Impute(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
+	ImputeConfigurations(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
+	ImputeInterference(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
 }
 
 type recommenderClient struct {
@@ -155,9 +158,18 @@ func NewRecommenderClient(cc *grpc.ClientConn) RecommenderClient {
 	return &recommenderClient{cc}
 }
 
-func (c *recommenderClient) Impute(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
+func (c *recommenderClient) ImputeConfigurations(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
 	out := new(Reply)
-	err := c.cc.Invoke(ctx, "/recommender.Recommender/Impute", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/recommender.recommender/ImputeConfigurations", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *recommenderClient) ImputeInterference(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
+	out := new(Reply)
+	err := c.cc.Invoke(ctx, "/recommender.recommender/ImputeInterference", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -166,46 +178,72 @@ func (c *recommenderClient) Impute(ctx context.Context, in *Request, opts ...grp
 
 // RecommenderServer is the server API for Recommender service.
 type RecommenderServer interface {
-	Impute(context.Context, *Request) (*Reply, error)
+	ImputeConfigurations(context.Context, *Request) (*Reply, error)
+	ImputeInterference(context.Context, *Request) (*Reply, error)
 }
 
 // UnimplementedRecommenderServer can be embedded to have forward compatible implementations.
 type UnimplementedRecommenderServer struct {
 }
 
-func (*UnimplementedRecommenderServer) Impute(ctx context.Context, req *Request) (*Reply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Impute not implemented")
+func (*UnimplementedRecommenderServer) ImputeConfigurations(ctx context.Context, req *Request) (*Reply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ImputeConfigurations not implemented")
+}
+func (*UnimplementedRecommenderServer) ImputeInterference(ctx context.Context, req *Request) (*Reply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ImputeInterference not implemented")
 }
 
 func RegisterRecommenderServer(s *grpc.Server, srv RecommenderServer) {
 	s.RegisterService(&_Recommender_serviceDesc, srv)
 }
 
-func _Recommender_Impute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Recommender_ImputeConfigurations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Request)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(RecommenderServer).Impute(ctx, in)
+		return srv.(RecommenderServer).ImputeConfigurations(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/recommender.Recommender/Impute",
+		FullMethod: "/recommender.recommender/ImputeConfigurations",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(RecommenderServer).Impute(ctx, req.(*Request))
+		return srv.(RecommenderServer).ImputeConfigurations(ctx, req.(*Request))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Recommender_ImputeInterference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Request)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecommenderServer).ImputeInterference(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/recommender.recommender/ImputeInterference",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecommenderServer).ImputeInterference(ctx, req.(*Request))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 var _Recommender_serviceDesc = grpc.ServiceDesc{
-	ServiceName: "recommender.Recommender",
+	ServiceName: "recommender.recommender",
 	HandlerType: (*RecommenderServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Impute",
-			Handler:    _Recommender_Impute_Handler,
+			MethodName: "ImputeConfigurations",
+			Handler:    _Recommender_ImputeConfigurations_Handler,
+		},
+		{
+			MethodName: "ImputeInterference",
+			Handler:    _Recommender_ImputeInterference_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

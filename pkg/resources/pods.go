@@ -188,7 +188,7 @@ func New(namespace string, fieldSelector string, configPath string, clientset *k
 				return nil, err
 			}
 		} else {
-			config, err = clientcmd.BuildConfigFromFlags("", "/home/dimitris/.kube/config")
+			config, err = clientcmd.BuildConfigFromFlags("", configPath)
 			if err != nil {
 				return nil, err
 			}
