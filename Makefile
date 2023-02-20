@@ -1,6 +1,6 @@
 REPO=tzourhs
 BIN_DIR=bin
-TAG=1.55
+TAG=1.56
 IMAGE=gpu-scheduler
 
 .EXPORT_ALL_VARIABLES:

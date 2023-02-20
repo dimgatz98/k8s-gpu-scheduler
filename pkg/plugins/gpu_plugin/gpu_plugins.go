@@ -3,14 +3,18 @@ package podstate
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
+	"github.com/go-redis/redis/v8"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/resources"
 
@@ -27,7 +31,6 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 
 	grpcClient "github.com/dimgatz98/k8s-gpu-scheduler/pkg/recommender/go_client/pkg"
-	grpc "github.com/dimgatz98/k8s-gpu-scheduler/pkg/recommender/go_client/utils"
 )
 
 type GPU struct {
@@ -61,63 +64,71 @@ func (g *GPU) Name() string {
 	return Name
 }
 
-func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, nodeName string) (int64, *framework.Status) {
-	nodeInfo, err := g.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
-	if err != nil {
-		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("getting node %q from Snapshot: %v", nodeName, err))
-	}
-
-	return g.score(nodeInfo, pod)
+type RedisScore struct {
+	NodeName string
+	Uuid     string
+	Score    int64
 }
 
-func (g *GPU) ScoreExtensions() framework.ScoreExtensions {
-	return g
+func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, redisDesc *client.Descriptor) (res map[string]map[Pod]float32, err error) {
+	res = map[string]map[Pod]float32{}
+
+	podsDesc, err := resources.New("", "", "", clientset)
+	if err != nil {
+		return nil, err
+	}
+	podsList, err := podsDesc.ListPods()
+	if err != nil {
+		return nil, err
+	}
+	podsSet := map[Pod]int{}
+	for i, pod := range podsList.Items {
+		podsSet[Pod{Name: pod.GetName(), Namespace: pod.GetNamespace()}] = i
+	}
+	for _, uuid := range uuids {
+		boundNodeBytes, err := json.Marshal(BoundNode{Name: nodeName, UUID: uuid})
+		if err != nil {
+			return nil, err
+		}
+		collocatedPodsListBytes, err := redisDesc.Get(string(boundNodeBytes))
+		var collocatedPodsList []Pod
+		json.Unmarshal([]byte(collocatedPodsListBytes), &collocatedPodsList)
+		if err != nil {
+			return nil, err
+		}
+
+		runningPods := []Pod{}
+		for _, pod := range collocatedPodsList {
+			val, ok := podsSet[pod]
+			if ok && (podsList.Items[val].Status.Phase == corev1.PodRunning) {
+				runningPods = append(runningPods, pod)
+			}
+		}
+
+		SLO := map[Pod]float32{}
+		for _, pod := range runningPods {
+			ind := podsSet[pod]
+			value := utils.GetEnv(&podsList.Items[ind], "SLO")
+			floatSLO, err := strconv.ParseFloat(value, 32)
+			if err != nil {
+				return nil, err
+			}
+			SLO[pod] = float32(floatSLO)
+		}
+		res[uuid] = SLO
+	}
+
+	return res, nil
 }
 
-func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *framework.Status) {
-	var err error
-	var score int64 = framework.MinNodeScore
-
-	clientset, err = utils.CheckClientset(clientset)
-	if err != nil {
-		klog.Fatal("Error in utils.CheckClientset() in score: ", err)
-	}
-
-	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, nil)
-	utils.Check(err)
-	if recommenderIPs == nil {
-		klog.Fatal("recommender not found")
-	}
-	var recommenderIP string
-	for _, value := range recommenderIPs[0] {
-		recommenderIP = value
-		break
-	}
-
-	nodeName := nodeInfo.Node().GetName()
-	klog.Info("Scoring node: ", nodeName)
-
-	// Looking for recommendations
-	response, err := grpcClient.ImputeConfigurations(recommenderIP+":32700", pod.GetName())
-	if err != nil {
-		klog.Fatal("Error in grpcClient.Call(): ", err)
-	}
-
-	// Replace A30 with nodeName
-	score = int64(grpc.FindMaxIndForNode("A30", response))
-	// If recommendation is found, return
-	if score != 0 {
-		klog.Info("recommender's score: ", score)
-		return score, nil
-	}
-	klog.Info("recommenders score equal to zero")
-
-	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, nil, clientset)
+func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, podList *corev1.PodList, uuids []string) (metrics map[string]map[string]float32, err error) {
+	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+	log.Println("dcgmPod: ", dcgmPod)
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset, nil)
+	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "prometheus", "", clientset, nil)
+	log.Println("promUrls: ", promUrls)
 	utils.Check(err)
 	if promUrls == nil {
 		klog.Fatal("Prometheus not found")
@@ -129,75 +140,386 @@ func (g *GPU) score(nodeInfo *framework.NodeInfo, pod *corev1.Pod) (int64, *fram
 	}
 
 	// Fetch DCGM data and score node based on the data
-	responses, err := promMetrics.DcgmPromInstantQuery("http://"+promUrl+":30090/", "{pod=\""+dcgmPod+"\"}")
+	responses, err := promMetrics.DcgmPromInstantQuery(
+		fmt.Sprintf("http://%s:30090/", promUrl),
+		fmt.Sprintf("{pod=\"%s\"}", dcgmPod),
+	)
 	if responses == nil {
-		return 0, nil
+		return nil, err
 	}
-	utils.Check(err)
-	metrics := make(map[string]map[string]float32)
-	for _, response := range responses {
-		var key string
-		if response.GPU_I_ID != "" {
-			key = response.GPU_I_ID
-		} else {
-			key = "NOT_MIG"
+
+	isMig := utils.Exists(uuids, "MIG")
+	gpuIds := []string{}
+	if isMig != -1 {
+		for _, response := range responses {
+			gpuIds = append(gpuIds, response.GPU_I_ID)
 		}
+	}
+	sort.Slice(gpuIds, func(i, j int) bool {
+		return i > j
+	})
+	gpuIdToUUID := map[string]string{}
+	for i, gpuId := range gpuIds {
+		gpuIdToUUID[gpuId] = uuids[i]
+	}
+
+	utils.Check(err)
+	metrics = make(map[string]map[string]float32)
+	for _, response := range responses {
 		value, err := strconv.ParseFloat(response.Value, 32)
 		utils.Check(err)
+		uuid := response.UUID
+		gpuId := response.GPU_I_ID
+		var key string
+		if gpuId != "" {
+			key = gpuIdToUUID[gpuId]
+		} else {
+			key = uuid
+		}
+
 		if _, found := metrics[key]; !found {
 			metrics[key] = map[string]float32{}
 		}
 		metrics[key][response.MetricName] = float32(value)
 		klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
 	}
+	return metrics, nil
+}
 
-	for _, value := range metrics {
-		var util, fbFree float32 = 1, 0
-		for metricName, metric := range value {
-			if metricName == "DCGM_FI_PROF_GR_ENGINE_ACTIVE" {
-				util = metric
-			} else if metricName == "DCGM_FI_DEV_FB_FREE" {
-				fbFree = metric
+func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, podList *corev1.PodList) (metrics map[string]map[string]float32, err error) {
+	if podList == nil {
+		desc, err := resources.New("", "spec.nodeName="+nodeName, "", clientset)
+		if err != nil {
+			return nil, err
+		}
+		podList, err = desc.ListPods()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+	log.Println("dcgmPod: ", dcgmPod)
+	utils.Check(err)
+
+	// Get prometheus node's IP
+	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset, podList)
+	log.Println("promUrls: ", promUrls)
+	utils.Check(err)
+	if promUrls == nil {
+		klog.Fatal("Prometheus not found")
+	}
+	var promUrl string
+	for _, value := range promUrls[0] {
+		promUrl = value
+		break
+	}
+
+	// Fetch DCGM data and score node based on the data
+	responses, err := promMetrics.DcgmPromInstantQuery(
+		fmt.Sprintf("http://%s:30090/", promUrl),
+		fmt.Sprintf("{pod=\"%s\"}", dcgmPod),
+	)
+	if responses == nil {
+		return nil, err
+	}
+
+	utils.Check(err)
+	metrics = make(map[string]map[string]float32)
+	for _, response := range responses {
+		value, err := strconv.ParseFloat(response.Value, 32)
+		utils.Check(err)
+		uuid := response.UUID
+		gpuId := response.GPU_I_ID
+		var key string
+		if gpuId != "" {
+			key = gpuId
+		} else {
+			key = uuid
+		}
+
+		if _, found := metrics[key]; !found {
+			metrics[key] = map[string]float32{}
+		}
+		metrics[key][response.MetricName] = float32(value)
+		klog.Info(response.MetricName, " for node {", nodeName, "} = ", response.Value)
+	}
+	return metrics, nil
+}
+
+func GetConfigurationPredictions(podName string, podList *corev1.PodList) (configurations map[string]float32, err error) {
+	// Find recommender node's IP
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, podList)
+	utils.Check(err)
+	if recommenderIPs == nil {
+		return nil, err
+	}
+	var recommenderIP string
+	for _, value := range recommenderIPs[0] {
+		recommenderIP = value
+		break
+	}
+
+	// Looking for recommendations
+	response, err := grpcClient.ImputeConfigurations(recommenderIP+":32700", podName)
+	if err != nil {
+		return nil, err
+	}
+
+	configurations = map[string]float32{}
+	for i, configuration := range response.Columns {
+		configurations[configuration] = response.Result[i]
+	}
+
+	return configurations, nil
+}
+
+func GetInterferencePredictions(podName string, podList *corev1.PodList) (interference map[string]float32, err error) {
+	// Find recommender node's IP
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, podList)
+	utils.Check(err)
+	if recommenderIPs == nil {
+		return nil, err
+	}
+	var recommenderIP string
+	for _, value := range recommenderIPs[0] {
+		recommenderIP = value
+		break
+	}
+
+	// Looking for recommendations
+	response, err := grpcClient.ImputeInterference(recommenderIP+":32700", podName)
+	if err != nil {
+		return nil, err
+	}
+
+	interference = map[string]float32{}
+	for i, pod := range response.Columns {
+		interference[pod] = response.Result[i]
+	}
+
+	return interference, nil
+}
+
+func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64, error) {
+	var err error
+	var score int64 = framework.MinNodeScore
+	var selectedUUID string = ""
+	var currSLO float64
+
+	tmpSLO := utils.GetEnv(pod, "SLO")
+	if tmpSLO == "" {
+		currSLO = 0
+	} else {
+		currSLO, err = strconv.ParseFloat(tmpSLO, 32)
+		if err != nil {
+			currSLO = 0
+		}
+	}
+
+	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
+	if err != nil {
+		klog.Info("FindNodesIP() failed in GetSLOs: ", err.Error())
+	}
+	if redisUrls == nil {
+		metrics, err := GetDcgmMetricsForNode(nodeName, clientset, nil)
+		if err != nil {
+			return 0, err
+		}
+		if len(metrics) == 0 {
+			return 0, fmt.Errorf("empty dcgm metrics")
+		}
+
+		for key := range metrics {
+			util := metrics[key]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
+			fbFree := metrics[key]["DCGM_FI_DEV_FB_FREE"]
+			tmpScore := fbFree - util*fbFree
+			if int64(tmpScore) > score {
+				score = int64(tmpScore)
 			}
 		}
-		tmpScore := int64(fbFree - fbFree*util)
-		if tmpScore > score {
-			score = tmpScore
+		klog.Warning("redisUrls empty in Logic()")
+		return score, nil
+	} else {
+		var redisUrl string
+		for _, value := range redisUrls[0] {
+			redisUrl = value
+		}
+		// Add redis port and password in k8s secret
+		redisDesc := client.New(redisUrl+":32767", "1234", 0)
+
+		uuids, err := redisDesc.Get(nodeName)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			klog.Warning("error in redisDesc.Get() in Logic(): ", err)
+			return 0, err
+		}
+		var tmpUuids []string
+		json.Unmarshal([]byte(uuids), &tmpUuids)
+
+		SLOs, err := GetSLOs(nodeName, tmpUuids, clientset, redisDesc)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			klog.Warningf("error in GetSLOs() in Logic(): %+v", SLOs, err)
+			return 0, err
+		}
+		klog.Infof("SLOs: %+v", SLOs)
+
+		metrics, err := GetDcgmMetricsForUUIDS(nodeName, clientset, nil, tmpUuids)
+		if err != nil {
+			return 0, err
+		}
+
+		nodeModel := ""
+		if strings.Contains(nodeName, "a30") {
+			nodeModel = "A30"
+		} else if strings.Contains(nodeName, "gpu") {
+			nodeModel = "V100"
+		}
+
+		klog.Info("nodeName: ", nodeName, "\nNodeModel: ", nodeModel)
+
+		if nodeModel != "" {
+			for _, uuid := range tmpUuids {
+				var sum float64 = 1
+				_, ok := SLOs[uuid]
+				// If the key exists
+				if ok {
+					for pod, SLO := range SLOs[uuid] {
+						confIndex := ""
+						confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
+						if err != nil {
+							return 0, err
+						}
+
+						confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
+						confPrediction, ok := confPredictions[confIndex]
+						if !ok {
+							continue
+						}
+
+						var interference float32 = 0
+						tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
+						if err != nil {
+							return 0, err
+						}
+						for collocatedPod := range SLOs[uuid] {
+							if pod == collocatedPod {
+								continue
+							}
+
+							for tmpPod, val := range tmpInterference {
+								if strings.Contains(collocatedPod.Name, tmpPod) {
+									interference += val
+									break
+								}
+							}
+						}
+						for tmpPod, val := range tmpInterference {
+							if strings.Contains(pod.Name, tmpPod) {
+								interference += val
+								break
+							}
+						}
+
+						sum += 1 / (math.Abs(float64(SLO - (confPrediction - interference))))
+					}
+				}
+
+				confIndex := ""
+				confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
+				if err != nil {
+					return 0, err
+				}
+				klog.Info("Configurations: ", confPredictions)
+				confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
+				confPrediction, ok := confPredictions[confIndex]
+				if !ok {
+					var fbFree, util float32 = 100, 0
+					if len(metrics) != 0 {
+						util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
+						fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+					}
+					tmpScore := float64(fbFree-fbFree*util) * sum
+					if int64(tmpScore) > score {
+						score = int64(tmpScore)
+						selectedUUID = uuid
+					}
+					continue
+				}
+
+				var interference float32 = 0
+				tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
+				if err != nil {
+					return 0, err
+				}
+				for collocatedPod := range SLOs[uuid] {
+					for tmpPod, val := range tmpInterference {
+						if strings.Contains(collocatedPod.Name, tmpPod) {
+							interference += val
+							break
+						}
+					}
+				}
+				klog.Info("Interference: ", tmpInterference)
+
+				sum += 1 / (math.Abs(float64(float32(currSLO) - (confPrediction - interference))))
+
+				var fbFree, util float32 = 100, 0
+				if len(metrics) != 0 {
+					util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
+					fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+				}
+				tmpScore := float64(fbFree-fbFree*util) * sum
+				if int64(tmpScore) > score {
+					score = int64(tmpScore)
+					selectedUUID = uuid
+				}
+			}
+		}
+		pod := Pod{Name: pod.Name, Namespace: pod.Namespace}
+		podBytes, err := json.Marshal(pod)
+		if err != nil {
+			return 0, err
+		}
+		val, err := redisDesc.Get(string(podBytes))
+		if err == nil || err == redis.Nil {
+			redisScore := RedisScore{}
+			json.Unmarshal([]byte(val), &redisScore)
+			if err == redis.Nil || score > redisScore.Score {
+				redisScore = RedisScore{Score: score, Uuid: selectedUUID, NodeName: nodeName}
+			}
+			redisScoreBytes, err := json.Marshal(redisScore)
+			if err != nil {
+				return 0, err
+			}
+			redisDesc.Set(string(podBytes), string(redisScoreBytes))
 		}
 	}
 
 	klog.Info("Score for node {", nodeName, "} = ", score)
 	return int64(score), nil
+}
 
-	// // Get redis data
-	// redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset)
-	// if err != nil {
-	// 	klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
-	// }
-	// if redisUrls == nil {
-	// 	klog.Fatal("Redis not found")
-	// }
-	// var redisUrl string
-	// for _, value := range redisUrls[0] {
-	// 	redisUrl = value
-	// }
-	// // Add redis port and password in k8s secret
-	// redisDesc := client.New(redisUrl+":32767", "1234", 0)
+func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, nodeName string) (int64, *framework.Status) {
+	clientset, err := utils.CheckClientset(clientset)
+	if err != nil {
+		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("Error in utils.CheckClientset() in Score(): %s", err))
+	}
 
-	// if err != nil {
-	// 	klog.Fatal("Error in utils.CheckClientset() in PostBind: ", err)
-	// }
+	nodeInfo, err := g.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
+	if err != nil {
+		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("getting node %q from Snapshot: %v", nodeName, err))
+	}
 
-	// val, err := redisDesc.Get(nodeName)
-	// if err != nil {
-	// 	klog.Fatal("Error occured in redis.Get() in PostBind: ", err)
-	// }
-	// var tmpUuids []string
-	// json.Unmarshal([]byte(val), &tmpUuids)
-	// isMig := utils.Exists(tmpUuids, "MIG")
-	// if err != nil {
-	// 	klog.Fatal("Error occured in utils.Exists() in PostBind: ", err)
-	// }
+	score, err := Logic(nodeInfo.Node().Name, pod, clientset)
+	if err != nil {
+		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("Error in Logic() in Score(): %s", err))
+	}
+
+	return score, nil
+}
+
+func (g *GPU) ScoreExtensions() framework.ScoreExtensions {
+	return g
 }
 
 func (g *GPU) NormalizeScore(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, scores framework.NodeScoreList) *framework.Status {
