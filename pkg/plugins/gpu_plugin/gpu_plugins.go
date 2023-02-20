@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
@@ -384,6 +385,9 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				// If the key exists
 				if ok {
 					for pod, SLO := range SLOs[uuid] {
+						if SLO == 0 {
+							continue
+						}
 						confIndex := ""
 						confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
 						if err != nil {
@@ -475,24 +479,17 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				}
 			}
 		}
-		pod := Pod{Name: pod.Name, Namespace: pod.Namespace}
-		podBytes, err := json.Marshal(pod)
+		podDesc, err := resources.New(pod.GetNamespace(), "", "", clientset)
 		if err != nil {
-			return 0, err
+			klog.Info("Pods.New() failed in PostBind: ", err.Error())
 		}
-		val, err := redisDesc.Get(string(podBytes))
-		if err == nil || err == redis.Nil {
-			redisScore := RedisScore{}
-			json.Unmarshal([]byte(val), &redisScore)
-			if err == redis.Nil || score > redisScore.Score {
-				redisScore = RedisScore{Score: score, Uuid: selectedUUID, NodeName: nodeName}
-			}
-			redisScoreBytes, err := json.Marshal(redisScore)
-			if err != nil {
-				return 0, err
-			}
-			redisDesc.Set(string(podBytes), string(redisScoreBytes))
-		}
+		_, err = podDesc.AppendToExistingConfigMapsInPod(
+			pod.GetName(),
+			// Here find the optimal values for the env variables and replace them below
+			map[string]string{
+				nodeName: selectedUUID,
+			},
+		)
 	}
 
 	klog.Info("Score for node {", nodeName, "} = ", score)
@@ -651,21 +648,28 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 		mu.Unlock()
 	}
 
-	// Find node's uuids
-	data, err := redisDesc.Get(nodeName)
-	if err != nil {
-		klog.Info("Redis Get() failed in PostBind: ", err.Error())
+	var cfgMapName string = ""
+	for _, envFrom := range p.Spec.Containers[0].EnvFrom {
+		if envFrom.ConfigMapRef != nil {
+			cfgMapName = envFrom.ConfigMapRef.LocalObjectReference.Name
+		}
 	}
 
-	var uuids []string
-	json.Unmarshal([]byte(data), &uuids)
-	uuid := uuids[countSave%len(uuids)]
-
-	klog.Info("Selected UUID: ", uuid)
-	// If GPU is MIG enabled score uuids and choose the fittest partition
-	// for _, uuid := range uuids {
-	// 		pass
-	// }
+	podDesc, err := resources.New(p.GetNamespace(), "", "", clientset)
+	if err != nil {
+		klog.Info("Pods.New() failed in PostBind: ", err.Error())
+	}
+	var cfgMap *v1.ConfigMap
+	if cfgMapName != "" {
+		cfgMap, err = podDesc.GetConfigMap(cfgMapName)
+	}
+	var uuid string = tmpUuids[rand.Intn(len(tmpUuids))]
+	for key, value := range cfgMap.Data {
+		if key == nodeName {
+			uuid = value
+			break
+		}
+	}
 
 	node := BoundNode{Name: nodeName, UUID: uuid}
 	gpuByteArray, err := json.Marshal(node)
@@ -693,17 +697,13 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	}
 
 	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
-	podDesc, err := resources.New(p.GetNamespace(), "", "", clientset)
-	if err != nil {
-		klog.Info("Pods.New() failed in PostBind: ", err.Error())
-	}
 	_, err = podDesc.AppendToExistingConfigMapsInPod(
 		p.GetName(),
 		// Here find the optimal values for the env variables and replace them below
 		map[string]string{
-			"CUDA_VISIBLE_DEVICES":              uuid,
-			"CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
-			"CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
+			"CUDA_VISIBLE_DEVICES": uuid,
+			// "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
+			// "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
 		},
 	)
 	if err != nil {
