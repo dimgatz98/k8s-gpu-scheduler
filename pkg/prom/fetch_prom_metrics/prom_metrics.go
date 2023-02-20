@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/prom/requests"
@@ -62,13 +61,13 @@ func ParseResponse(response []byte) (Responses []Response, err error) {
 }
 
 func DcgmPromInstantQuery(url string, filter string) ([]Response, error) {
-	var params []map[string]string
-
-	data, err := os.ReadFile("/scheduler/pkg/prom/fetch_prom_metrics/metrics.json")
-	if err != nil {
-		return nil, err
+	params := []map[string]string{
+		{"query": "DCGM_FI_PROF_GR_ENGINE_ACTIVE"},
+		{"query": "DCGM_FI_DEV_MEM_COPY_UTIL"},
+		{"query": "DCGM_FI_DEV_GPU_TEMP"},
+		{"query": "DCGM_FI_DEV_FB_USED"},
+		{"query": "DCGM_FI_DEV_FB_FREE"},
 	}
-	json.Unmarshal(data, &params)
 
 	if filter != "" {
 		for i := range params {
@@ -110,6 +109,7 @@ func DcgmPromInstantQuery(url string, filter string) ([]Response, error) {
 
 	var Responses []Response
 	var tmp []Response
+	var err error
 	for _, response := range responses {
 		tmp, err = ParseResponse(response)
 		Responses = append(Responses, tmp...)
