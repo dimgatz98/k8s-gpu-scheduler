@@ -2,6 +2,7 @@ package resources
 
 import (
 	"errors"
+	"log"
 	"testing"
 )
 
@@ -35,6 +36,75 @@ func Test_Resources(t *testing.T) {
 				fatal(t, tc.expectedErr, err)
 			}
 			_, err = desc.CreateConfigMap("wooho", map[string]string{"1": "2"})
+			if !errors.Is(err, tc.expectedErr) {
+				fatal(t, tc.expectedErr, err)
+			}
+		})
+	}
+}
+
+func Test_AppendToExistingConfigMapsInPod(t *testing.T) {
+	tt := []struct {
+		name             string
+		podName          string
+		namespace        string
+		data             map[string]string
+		overwrite        bool
+		expectedErr      error
+		expectedResponse string
+	}{
+		{
+			name:        "test1",
+			podName:     "mlperf-gpu-onnx-mobilenet-1024",
+			namespace:   "default",
+			data:        map[string]string{"CUDA_VISIBLE_DEVICES": "test"},
+			overwrite:   true,
+			expectedErr: nil,
+		},
+	}
+	for i := range tt {
+		tc := tt[i]
+
+		t.Run(tc.name, func(t *testing.T) {
+			desc, err := New(tc.namespace, "", "/home/dimitris/.kube/config", nil)
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = desc.AppendToExistingConfigMapsInPod(tc.podName, tc.data, tc.overwrite)
+			if !errors.Is(err, tc.expectedErr) {
+				fatal(t, tc.expectedErr, err)
+			}
+		})
+	}
+}
+
+func Test_UpdateConfigMap(t *testing.T) {
+	tt := []struct {
+		name        string
+		namespace   string
+		cfgMapName  string
+		data        map[string]string
+		overwrite   bool
+		expectedErr error
+	}{
+		{
+			name:        "test2",
+			namespace:   "default",
+			cfgMapName:  "game-demo1",
+			data:        map[string]string{"CUDA_VISIBLE_DEVICES": "test"},
+			overwrite:   true,
+			expectedErr: nil,
+		},
+	}
+	for i := range tt {
+		tc := tt[i]
+
+		t.Run(tc.name, func(t *testing.T) {
+			desc, err := New(tc.namespace, "", "/home/dimitris/.kube/config", nil)
+			if err != nil {
+				log.Fatal(err)
+			}
+			_, err = desc.UpdateConfigMap(tc.cfgMapName, tc.data, tc.overwrite)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

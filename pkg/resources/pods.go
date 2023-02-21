@@ -165,6 +165,10 @@ func (r *Descriptor) DeletePod(podName string, options metav1.DeleteOptions) err
 }
 
 func New(namespace string, fieldSelector string, configPath string, clientset *kubernetes.Clientset) (r *Descriptor, err error) {
+	if namespace == "" {
+		namespace = "default"
+	}
+
 	if clientset == nil {
 		var config *rest.Config
 		if configPath == "" {
