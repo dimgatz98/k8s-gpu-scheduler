@@ -484,7 +484,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 		if err != nil {
 			klog.Info("Pods.New() failed in PostBind: ", err.Error())
 		}
-		_, err = podDesc.AppendToExistingConfigMapsInPod(
+		err = podDesc.AppendToExistingConfigMapsInPod(
 			pod.GetName(),
 			map[string]string{
 				nodeName: selectedUUID,
@@ -698,7 +698,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	}
 
 	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
-	_, err = podDesc.AppendToExistingConfigMapsInPod(
+	err = podDesc.AppendToExistingConfigMapsInPod(
 		p.GetName(),
 		// Here find the optimal values for the env variables and replace them below
 		map[string]string{

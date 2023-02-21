@@ -87,7 +87,7 @@ func (r *Descriptor) Get(podName string) (result *v1.Pod, err error) {
 	return pod, err
 }
 
-func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string) (ret *v1.ConfigMap, err error) {
+func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string, overwrite bool) (ret *v1.ConfigMap, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
 	cfgMap, err := coreV1.ConfigMaps(r.Namespace).Get(ctx, cfgMapName, metav1.GetOptions{})
@@ -96,7 +96,14 @@ func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string) 
 	}
 
 	for key, value := range data {
-		cfgMap.Data[key] = value
+		_, ok := cfgMap.Data[key]
+		if ok {
+			if overwrite {
+				cfgMap.Data[key] = value
+			}
+		} else {
+			cfgMap.Data[key] = value
+		}
 	}
 	ret, err = coreV1.ConfigMaps(r.Namespace).Update(ctx, cfgMap, metav1.UpdateOptions{})
 	return ret, err
@@ -130,10 +137,10 @@ func (r *Descriptor) GetConfigMap(cfgMapName string) (ret *v1.ConfigMap, err err
 	return ret, err
 }
 
-func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[string]string, overwrite bool) (ret []*v1.ConfigMap, err error) {
+func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[string]string, overwrite bool) (err error) {
 	pod, err := r.Get(podName)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var tmpData map[string]string
@@ -141,31 +148,14 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[st
 		for _, envFrom := range container.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
 				cfgMapName := envFrom.ConfigMapRef.LocalObjectReference.Name
+				_, err := r.UpdateConfigMap(cfgMapName, tmpData, overwrite)
 				if err != nil {
-					return nil, err
-				}
-				tmpData = data
-				// Check if keys already exist and if so ignore them
-				cfgMap, err := r.GetConfigMap(cfgMapName)
-				if !overwrite {
-					for key := range data {
-						_, ok := cfgMap.Data[key]
-						if ok {
-							delete(tmpData, key)
-						}
-					}
-				}
-
-				tmpRet, err := r.UpdateConfigMap(cfgMapName, tmpData)
-				ret = append(ret, tmpRet)
-				if err != nil {
-					return ret, err
+					return err
 				}
 			}
 		}
 	}
-
-	return ret, err
+	return nil
 }
 
 func (r *Descriptor) DeletePod(podName string, options metav1.DeleteOptions) error {
