@@ -151,12 +151,19 @@ func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, po
 		}
 	}
 	sort.Slice(gpuIds, func(i, j int) bool {
-		return i > j
+		return gpuIds[i] < gpuIds[j]
 	})
 	gpuIdToUUID := map[string]string{}
-	for i, gpuId := range gpuIds {
-		gpuIdToUUID[gpuId] = uuids[i]
+	count := 0
+	for _, gpuId := range gpuIds {
+		_, ok := gpuIdToUUID[gpuId]
+		if ok {
+			continue
+		}
+		gpuIdToUUID[gpuId] = strconv.Itoa(count)
+		count++
 	}
+	klog.Info("gpuIds: ", gpuIds, "\ngpuIdToUUID: ", gpuIdToUUID)
 
 	utils.Check(err)
 	metrics = make(map[string]map[string]float32)
