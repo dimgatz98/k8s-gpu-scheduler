@@ -57,7 +57,7 @@ spec:
           name: scheduler-config
       containers:
       - name: scheduler-ctrl
-        image: tzourhs/gpu-scheduler:1.58
+        image: tzourhs/gpu-scheduler:1.59
         imagePullPolicy: IfNotPresent
         command:
         args:

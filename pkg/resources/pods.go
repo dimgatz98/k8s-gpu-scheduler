@@ -130,7 +130,7 @@ func (r *Descriptor) GetConfigMap(cfgMapName string) (ret *v1.ConfigMap, err err
 	return ret, err
 }
 
-func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[string]string) (ret []*v1.ConfigMap, err error) {
+func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[string]string, overwrite bool) (ret []*v1.ConfigMap, err error) {
 	pod, err := r.Get(podName)
 	if err != nil {
 		return nil, err
@@ -147,11 +147,15 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[st
 				tmpData = data
 				// Check if keys already exist and if so ignore them
 				cfgMap, err := r.GetConfigMap(cfgMapName)
-				for key := range data {
-					if KeyExists(key, cfgMap.Data) {
-						delete(tmpData, key)
+				if !overwrite {
+					for key := range data {
+						_, ok := cfgMap.Data[key]
+						if ok {
+							delete(tmpData, key)
+						}
 					}
 				}
+
 				tmpRet, err := r.UpdateConfigMap(cfgMapName, tmpData)
 				ret = append(ret, tmpRet)
 				if err != nil {
@@ -168,15 +172,6 @@ func (r *Descriptor) DeletePod(podName string, options metav1.DeleteOptions) err
 	coreV1 := r.Clientset.CoreV1()
 	err := coreV1.Pods(r.Namespace).Delete(ctx, podName, options)
 	return err
-}
-
-func KeyExists(key string, m map[string]string) bool {
-	for k := range m {
-		if key == k {
-			return true
-		}
-	}
-	return false
 }
 
 func New(namespace string, fieldSelector string, configPath string, clientset *kubernetes.Clientset) (r *Descriptor, err error) {

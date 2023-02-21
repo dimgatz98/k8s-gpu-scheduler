@@ -65,12 +65,6 @@ func (g *GPU) Name() string {
 	return Name
 }
 
-type RedisScore struct {
-	NodeName string
-	Uuid     string
-	Score    int64
-}
-
 func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, redisDesc *client.Descriptor) (res map[string]map[Pod]float32, err error) {
 	res = map[string]map[Pod]float32{}
 
@@ -485,10 +479,10 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 		}
 		_, err = podDesc.AppendToExistingConfigMapsInPod(
 			pod.GetName(),
-			// Here find the optimal values for the env variables and replace them below
 			map[string]string{
 				nodeName: selectedUUID,
 			},
+			true,
 		)
 	}
 
@@ -705,6 +699,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 			// "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
 			// "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
 		},
+		true,
 	)
 	if err != nil {
 		klog.Info("AppendToExistingConfigMapsInPod() failed in PostBind: ", err.Error())

@@ -1,5 +1,5 @@
 REPO=tzourhs
-TAG=0.10
+TAG=0.11
 IMAGE=recommender
 
 all: install image-build image-push
