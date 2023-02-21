@@ -50,7 +50,7 @@ spec:
       hostNetwork: True
       containers:
       - name: recommender-container
-        image: tzourhs/recommender:0.11
+        image: tzourhs/recommender:0.12
         env:
         - name: CONFIGURATIONS_DATA_PATH
           value: "/recommender/recommender/configurations_train.ods"
