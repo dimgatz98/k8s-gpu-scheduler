@@ -68,7 +68,8 @@ func (g *GPU) Name() string {
 func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, redisDesc *client.Descriptor) (res map[string]map[Pod]float32, err error) {
 	res = map[string]map[Pod]float32{}
 
-	podsDesc, err := resources.New("", "", "", clientset)
+	fieldSelector := fmt.Sprintf("spec.nodeName=%s", nodeName)
+	podsDesc, err := resources.New("", fieldSelector, "", clientset)
 	if err != nil {
 		return nil, err
 	}
@@ -76,34 +77,41 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 	if err != nil {
 		return nil, err
 	}
-	podsSet := map[Pod]int{}
-	for i, pod := range podsList.Items {
-		podsSet[Pod{Name: pod.GetName(), Namespace: pod.GetNamespace()}] = i
-	}
-	for _, uuid := range uuids {
-		boundNodeBytes, err := json.Marshal(BoundNode{Name: nodeName, UUID: uuid})
-		if err != nil {
-			return nil, err
-		}
-		collocatedPodsListBytes, err := redisDesc.Get(string(boundNodeBytes))
-		var collocatedPodsList []Pod
-		json.Unmarshal([]byte(collocatedPodsListBytes), &collocatedPodsList)
-		if err != nil {
-			return nil, err
-		}
 
-		runningPods := []Pod{}
-		for _, pod := range collocatedPodsList {
-			val, ok := podsSet[pod]
-			if ok && (podsList.Items[val].Status.Phase == corev1.PodRunning) {
-				runningPods = append(runningPods, pod)
+	uuidsSet := map[string]int{}
+	for i, uuid := range uuids {
+		uuidsSet[uuid] = i
+	}
+	for _, pod := range podsList.Items {
+		uuid := ""
+		found := false
+		for _, envFrom := range pod.Spec.Containers[0].EnvFrom {
+			if envFrom.ConfigMapRef == nil {
+				continue
+			}
+			cfgMapName := envFrom.ConfigMapRef.Name
+			cfgMap, err := podsDesc.GetConfigMap(cfgMapName)
+			if err != nil {
+				continue
+			}
+			for key, val := range cfgMap.Data {
+				if key == "CUDA_VISIBLE_DEVICES" {
+					uuid = val
+					found = true
+					break
+				}
+			}
+			if found {
+				break
 			}
 		}
+		if uuid == "" {
+			continue
+		}
 
-		SLO := map[Pod]float32{}
-		for _, pod := range runningPods {
-			ind := podsSet[pod]
-			value := utils.GetEnv(&podsList.Items[ind], "SLO")
+		_, ok := uuidsSet[uuid]
+		if ok {
+			value := utils.GetEnv(&pod, "SLO")
 			if value == "" {
 				continue
 			}
@@ -111,9 +119,8 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 			if err != nil {
 				return nil, err
 			}
-			SLO[pod] = float32(floatSLO)
+			res[uuid][Pod{Name: pod.Name, Namespace: pod.Namespace}] = float32(floatSLO)
 		}
-		res[uuid] = SLO
 	}
 
 	return res, nil
@@ -121,6 +128,9 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 
 func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, podList *corev1.PodList, uuids []string) (metrics map[string]map[string]float32, err error) {
 	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+	if dcgmPod == "" {
+		return nil, fmt.Errorf("Dcgm pod not found")
+	}
 	log.Println("dcgmPod: ", dcgmPod)
 	utils.Check(err)
 
@@ -205,6 +215,9 @@ func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, pod
 	}
 
 	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+	if dcgmPod == "" {
+		return nil, fmt.Errorf("Dcgm pod not found")
+	}
 	log.Println("dcgmPod: ", dcgmPod)
 	utils.Check(err)
 
@@ -387,6 +400,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 		if nodeModel != "" {
 			for _, uuid := range tmpUuids {
 				var sum float64 = 1
+
 				_, ok := SLOs[uuid]
 				// If the key exists
 				if ok {
@@ -394,6 +408,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 						if SLO == 0 {
 							continue
 						}
+
 						confIndex := ""
 						confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
 						if err != nil {
@@ -423,6 +438,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 								}
 							}
 						}
+
 						for tmpPod, val := range tmpInterference {
 							if strings.Contains(pod.Name, tmpPod) {
 								interference += val
@@ -434,13 +450,14 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 					}
 				}
 
+				// For the pod that is being scheduled
+				confIndex := ""
 				confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
 				if err != nil {
 					return 0, err
 				}
-				klog.Info("Configurations: ", confPredictions)
-				confIndex := fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
-				klog.Info("Configurations Index: ", confIndex)
+
+				confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
 				confPrediction, ok := confPredictions[confIndex]
 				if !ok {
 					var fbFree, util float32 = 100, 0
@@ -453,10 +470,8 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 						score = int64(tmpScore)
 						selectedUUID = uuid
 					}
-					klog.Info("Hello 1")
 					continue
 				}
-				klog.Info("Hello 2")
 
 				var interference float32 = 0
 				tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
@@ -465,7 +480,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				}
 				for collocatedPod := range SLOs[uuid] {
 					for tmpPod, val := range tmpInterference {
-						if strings.Contains(collocatedPod.Name, tmpPod) {
+						if strings.Contains(strings.ReplaceAll(collocatedPod.Name, "-", "_"), tmpPod) {
 							interference += val
 							break
 						}
@@ -480,6 +495,14 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 					util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
 					fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
 				}
+				klog.Infof(
+					"Metrics for UUID %s: fb = %f, util = %f, interference = %f, configuration = %f",
+					uuid,
+					fbFree,
+					util,
+					interference,
+					confPrediction,
+				)
 				tmpScore := float64(fbFree-fbFree*util) * sum
 				if int64(tmpScore) > score {
 					score = int64(tmpScore)
@@ -681,31 +704,6 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 			uuid = value
 			break
 		}
-	}
-
-	node := BoundNode{Name: nodeName, UUID: uuid}
-	gpuByteArray, err := json.Marshal(node)
-	if err != nil {
-		klog.Info("json.Marshal() failed in PostBind: ", err.Error())
-	}
-
-	collocatedPods, err := redisDesc.Get(string(gpuByteArray))
-	if err != nil {
-		klog.Info("error in redisDesc.Get(string(gpuByteArray)) in Logic(): ", err)
-	}
-	podList := []Pod{}
-	if collocatedPods != "" {
-		json.Unmarshal([]byte(collocatedPods), &podList)
-	}
-	podList = append(podList, Pod{Name: p.GetName(), Namespace: p.GetNamespace()})
-	podListByteArray, err := json.Marshal(podList)
-	if err != nil {
-		klog.Info("json.Marshal() failed in PostBind: ", err.Error())
-	}
-
-	err = redisDesc.Set(string(gpuByteArray), string(podListByteArray))
-	if err != nil {
-		klog.Info("Redis Set() failed in PostBind: ", err.Error())
 	}
 
 	klog.Info("UUID: ", uuid)

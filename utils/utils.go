@@ -117,9 +117,9 @@ func CheckClientset(clientset *kubernetes.Clientset) (*kubernetes.Clientset, err
 }
 
 func GetEnv(pod *corev1.Pod, name string) (value string) {
-	for _, envFrom := range pod.Spec.Containers[0].Env {
-		if envFrom.Name == name {
-			value = envFrom.Value
+	for _, envVar := range pod.Spec.Containers[0].Env {
+		if envVar.Name == name {
+			value = envVar.Value
 			break
 		}
 	}
