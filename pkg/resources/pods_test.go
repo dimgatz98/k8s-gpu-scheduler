@@ -35,7 +35,7 @@ func Test_Resources(t *testing.T) {
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}
-			_, err = desc.CreateConfigMap("wooho", map[string]string{"1": "2"})
+			_, err = desc.CreateConfigMap("woohoo", map[string]string{"1": "2"})
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

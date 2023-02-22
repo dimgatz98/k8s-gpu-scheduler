@@ -104,6 +104,9 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 		for _, pod := range runningPods {
 			ind := podsSet[pod]
 			value := utils.GetEnv(&podsList.Items[ind], "SLO")
+			if value == "" {
+				continue
+			}
 			floatSLO, err := strconv.ParseFloat(value, 32)
 			if err != nil {
 				return nil, err
@@ -154,14 +157,15 @@ func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, po
 		return gpuIds[i] < gpuIds[j]
 	})
 	gpuIdToUUID := map[string]string{}
-	count := 0
+	count := -1
 	for _, gpuId := range gpuIds {
 		_, ok := gpuIdToUUID[gpuId]
 		if ok {
+			gpuIdToUUID[gpuId] = uuids[count]
 			continue
 		}
-		gpuIdToUUID[gpuId] = strconv.Itoa(count)
 		count++
+		gpuIdToUUID[gpuId] = uuids[count]
 	}
 	klog.Info("gpuIds: ", gpuIds, "\ngpuIdToUUID: ", gpuIdToUUID)
 
@@ -251,7 +255,8 @@ func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, pod
 
 func GetConfigurationPredictions(podName string, podList *corev1.PodList) (configurations map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "recommender", "", clientset, podList)
+	klog.Info("recommenderIPs: ", recommenderIPs)
 	utils.Check(err)
 	if recommenderIPs == nil {
 		return nil, err
@@ -278,7 +283,7 @@ func GetConfigurationPredictions(podName string, podList *corev1.PodList) (confi
 
 func GetInterferencePredictions(podName string, podList *corev1.PodList) (interference map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "recommender", "", clientset, podList)
 	utils.Check(err)
 	if recommenderIPs == nil {
 		return nil, err
@@ -429,13 +434,13 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 					}
 				}
 
-				confIndex := ""
 				confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
 				if err != nil {
 					return 0, err
 				}
 				klog.Info("Configurations: ", confPredictions)
-				confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
+				confIndex := fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
+				klog.Info("Configurations Index: ", confIndex)
 				confPrediction, ok := confPredictions[confIndex]
 				if !ok {
 					var fbFree, util float32 = 100, 0
@@ -448,8 +453,10 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 						score = int64(tmpScore)
 						selectedUUID = uuid
 					}
+					klog.Info("Hello 1")
 					continue
 				}
+				klog.Info("Hello 2")
 
 				var interference float32 = 0
 				tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
@@ -480,6 +487,8 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				}
 			}
 		}
+
+		klog.Info("selectedUUID: ", selectedUUID)
 		podDesc, err := resources.New(pod.GetNamespace(), "", "", clientset)
 		if err != nil {
 			klog.Info("Pods.New() failed in PostBind: ", err.Error())
@@ -653,6 +662,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	for _, envFrom := range p.Spec.Containers[0].EnvFrom {
 		if envFrom.ConfigMapRef != nil {
 			cfgMapName = envFrom.ConfigMapRef.LocalObjectReference.Name
+			break
 		}
 	}
 
@@ -664,6 +674,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	if cfgMapName != "" {
 		cfgMap, err = podDesc.GetConfigMap(cfgMapName)
 	}
+	klog.Info("cfgMapName: ", cfgMapName)
 	var uuid string = tmpUuids[rand.Intn(len(tmpUuids))]
 	for key, value := range cfgMap.Data {
 		if key == nodeName {
@@ -697,6 +708,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 		klog.Info("Redis Set() failed in PostBind: ", err.Error())
 	}
 
+	klog.Info("UUID: ", uuid)
 	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
 	err = podDesc.AppendToExistingConfigMapsInPod(
 		p.GetName(),

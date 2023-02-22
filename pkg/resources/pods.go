@@ -143,12 +143,11 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[st
 		return err
 	}
 
-	var tmpData map[string]string
 	for _, container := range pod.Spec.Containers {
 		for _, envFrom := range container.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
 				cfgMapName := envFrom.ConfigMapRef.LocalObjectReference.Name
-				_, err := r.UpdateConfigMap(cfgMapName, tmpData, overwrite)
+				_, err := r.UpdateConfigMap(cfgMapName, data, overwrite)
 				if err != nil {
 					return err
 				}
