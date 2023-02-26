@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/redis/client"
 
 	"github.com/akamensky/argparse"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -41,7 +43,13 @@ func main() {
 		log.Fatal("Error: ", err)
 	}
 
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
+	factory := informers.NewSharedInformerFactory(clientset, 10*time.Minute)
+	podsLister := factory.Core().V1().Pods().Lister()
+	stopCh := make(chan struct{})
+	factory.Start(stopCh)
+	factory.WaitForCacheSync(stopCh)
+
+	redisUrls, err := utils.FindNodesIPFromPod(podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}

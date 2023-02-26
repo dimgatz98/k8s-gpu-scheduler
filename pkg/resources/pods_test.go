@@ -4,6 +4,9 @@ import (
 	"errors"
 	"log"
 	"testing"
+	"time"
+
+	"k8s.io/client-go/informers"
 )
 
 func fatal(t *testing.T, expected, got interface{}) {
@@ -70,7 +73,13 @@ func Test_AppendToExistingConfigMapsInPod(t *testing.T) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			err = desc.AppendToExistingConfigMapsInPod(tc.podName, tc.data, tc.overwrite)
+			factory := informers.NewSharedInformerFactory(desc.Clientset, 10*time.Minute)
+			indexer := factory.Core().V1().ConfigMaps().Informer().GetIndexer()
+			stopCh := make(chan struct{})
+			factory.Start(stopCh)
+			factory.WaitForCacheSync(stopCh)
+
+			err = desc.AppendToExistingConfigMapsInPod(indexer, tc.podName, tc.data, tc.overwrite)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}
@@ -104,7 +113,13 @@ func Test_UpdateConfigMap(t *testing.T) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			_, err = desc.UpdateConfigMap(tc.cfgMapName, tc.data, tc.overwrite)
+
+			factory := informers.NewSharedInformerFactory(desc.Clientset, 10*time.Minute)
+			indexer := factory.Core().V1().ConfigMaps().Informer().GetIndexer()
+			stopCh := make(chan struct{})
+			factory.Start(stopCh)
+			factory.WaitForCacheSync(stopCh)
+			_, err = desc.UpdateConfigMap(indexer, tc.cfgMapName, tc.data, tc.overwrite)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

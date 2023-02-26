@@ -3,14 +3,17 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	v1 "k8s.io/client-go/listers/core/v1"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -30,6 +33,7 @@ type PatchPodParam struct {
 type (
 	Descriptor struct {
 		Clientset     *kubernetes.Clientset
+		indexer       cache.Indexer
 		Namespace     string
 		FieldSelector string
 	}
@@ -37,26 +41,26 @@ type (
 	Resources interface {
 		ListPods()
 		PatchPod(params *PatchPodParam)
-		Get(podName string) (result *v1.Pod, err error)
-		UpdateConfigMap(mapName string, data map[string]string) (ret *v1.ConfigMap, err error)
-		CreateConfigMap(mapName string, data map[string]string) (ret *v1.ConfigMap, err error)
-		AppendToExistingConfigMapsInPod(podName string, data map[string]string) (ret []*v1.ConfigMap, err error)
+		Get(podName string) (result *corev1.Pod, err error)
+		UpdateConfigMap(mapName string, data map[string]string) (ret *corev1.ConfigMap, err error)
+		CreateConfigMap(mapName string, data map[string]string) (ret *corev1.ConfigMap, err error)
+		AppendToExistingConfigMapsInPod(podName string, data map[string]string) (ret []*corev1.ConfigMap, err error)
 		DeletePod(podName string, options metav1.DeleteOptions) error
 	}
 )
 
 var ctx = context.Background()
 
-func (r *Descriptor) ListPods() (*corev1.PodList, error) {
-	list, err := r.Clientset.CoreV1().Pods(r.Namespace).List(
-		ctx,
-		metav1.ListOptions{
-			FieldSelector: r.FieldSelector,
-		})
+func (r *Descriptor) ListPods(podsLister v1.PodLister) (list []*corev1.Pod, err error) {
+	selector := labels.NewSelector()
+	list, err = podsLister.Pods(r.Namespace).List(selector)
+	if err != nil {
+		panic(err)
+	}
 	return list, err
 }
 
-func (r *Descriptor) PatchPod(params *PatchPodParam) (result *v1.Pod, err error) {
+func (r *Descriptor) PatchPod(params *PatchPodParam) (result *corev1.Pod, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
 	operatorData := params.OperatorData
@@ -80,17 +84,21 @@ func (r *Descriptor) PatchPod(params *PatchPodParam) (result *v1.Pod, err error)
 	return result, err
 }
 
-func (r *Descriptor) Get(podName string) (result *v1.Pod, err error) {
-	coreV1 := r.Clientset.CoreV1()
-
-	pod, err := coreV1.Pods(r.Namespace).Get(ctx, podName, metav1.GetOptions{})
-	return pod, err
+func (r *Descriptor) Get(podName string, indexer cache.Indexer) (result *corev1.Pod, err error) {
+	tmp, exists, err := indexer.GetByKey(fmt.Sprintf("%s/%s", r.Namespace, podName))
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return &corev1.Pod{}, nil
+	}
+	return tmp.(*corev1.Pod), err
 }
 
-func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string, overwrite bool) (ret *v1.ConfigMap, err error) {
+func (r *Descriptor) UpdateConfigMap(indexer cache.Indexer, cfgMapName string, data map[string]string, overwrite bool) (ret *corev1.ConfigMap, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
-	cfgMap, err := coreV1.ConfigMaps(r.Namespace).Get(ctx, cfgMapName, metav1.GetOptions{})
+	cfgMap, err := r.GetConfigMap(cfgMapName, indexer)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +117,7 @@ func (r *Descriptor) UpdateConfigMap(cfgMapName string, data map[string]string, 
 	return ret, err
 }
 
-func (r *Descriptor) CreateConfigMap(mapName string, data map[string]string) (ret *v1.ConfigMap, err error) {
+func (r *Descriptor) CreateConfigMap(mapName string, data map[string]string) (ret *corev1.ConfigMap, err error) {
 	coreV1 := r.Clientset.CoreV1()
 
 	cfgMap := corev1.ConfigMap{
@@ -131,14 +139,19 @@ func (r *Descriptor) CreateConfigMap(mapName string, data map[string]string) (re
 	return ret, err
 }
 
-func (r *Descriptor) GetConfigMap(cfgMapName string) (ret *v1.ConfigMap, err error) {
-	coreV1 := r.Clientset.CoreV1()
-	ret, err = coreV1.ConfigMaps(r.Namespace).Get(ctx, cfgMapName, metav1.GetOptions{})
-	return ret, err
+func (r *Descriptor) GetConfigMap(cfgMapName string, indexer cache.Indexer) (ret *corev1.ConfigMap, err error) {
+	tmp, exists, err := indexer.GetByKey(fmt.Sprintf("%s/%s", r.Namespace, cfgMapName))
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return &corev1.ConfigMap{}, nil
+	}
+	return tmp.(*corev1.ConfigMap), err
 }
 
-func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[string]string, overwrite bool) (err error) {
-	pod, err := r.Get(podName)
+func (r *Descriptor) AppendToExistingConfigMapsInPod(indexer cache.Indexer, podName string, data map[string]string, overwrite bool) (err error) {
+	pod, err := r.Get(podName, indexer)
 	if err != nil {
 		return err
 	}
@@ -147,7 +160,7 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(podName string, data map[st
 		for _, envFrom := range container.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
 				cfgMapName := envFrom.ConfigMapRef.LocalObjectReference.Name
-				_, err := r.UpdateConfigMap(cfgMapName, data, overwrite)
+				_, err := r.UpdateConfigMap(indexer, cfgMapName, data, overwrite)
 				if err != nil {
 					return err
 				}

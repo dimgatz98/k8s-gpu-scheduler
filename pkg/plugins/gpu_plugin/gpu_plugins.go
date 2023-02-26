@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
 	"github.com/go-redis/redis/v8"
@@ -24,10 +23,11 @@ import (
 	promMetrics "github.com/dimgatz98/k8s-gpu-scheduler/pkg/prom/fetch_prom_metrics"
 
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	v1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
 
@@ -51,6 +51,16 @@ var configs []string = []string{"all-1g.6gb", "all-2g.12gb", "all-4g.24gb"}
 var partitions []int = []int{4, 2, 1}
 var configCount = 0
 
+type Listers struct {
+	configMapLister v1.ConfigMapLister
+	podsLister      v1.PodLister
+}
+
+type Indexers struct {
+	configMapIndexer cache.Indexer
+	podIndexer       cache.Indexer
+}
+
 type Pod struct {
 	Name      string
 	Namespace string
@@ -60,6 +70,10 @@ type BoundNode struct {
 	Name string
 	UUID string
 }
+
+var factory informers.SharedInformerFactory = nil
+var listers Listers
+var indexers Indexers
 
 func (g *GPU) Name() string {
 	return Name
@@ -73,7 +87,7 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 	if err != nil {
 		return nil, err
 	}
-	podsList, err := podsDesc.ListPods()
+	podsList, err := podsDesc.ListPods(listers.podsLister)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +96,12 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 	for i, uuid := range uuids {
 		uuidsSet[uuid] = i
 	}
-	for _, pod := range podsList.Items {
+	for _, pod := range podsList {
+		// If PodSucceeded, PodFailed or PodUnknown ignore
+		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
+			continue
+		}
+
 		uuid := ""
 		found := false
 		for _, envFrom := range pod.Spec.Containers[0].EnvFrom {
@@ -90,7 +109,7 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 				continue
 			}
 			cfgMapName := envFrom.ConfigMapRef.Name
-			cfgMap, err := podsDesc.GetConfigMap(cfgMapName)
+			cfgMap, err := podsDesc.GetConfigMap(cfgMapName, indexers.configMapIndexer)
 			if err != nil {
 				continue
 			}
@@ -111,7 +130,7 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 
 		_, ok := uuidsSet[uuid]
 		if ok {
-			value := utils.GetEnv(&pod, "SLO")
+			value := utils.GetEnv(pod, "SLO")
 			if value == "" {
 				continue
 			}
@@ -119,23 +138,33 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 			if err != nil {
 				return nil, err
 			}
-			res[uuid][Pod{Name: pod.Name, Namespace: pod.Namespace}] = float32(floatSLO)
+			_, ok := res[uuid]
+			if ok {
+				res[uuid][Pod{Name: pod.Name, Namespace: pod.Namespace}] = float32(floatSLO)
+			} else {
+				res[uuid] = map[Pod]float32{
+					{
+						Name:      pod.Name,
+						Namespace: pod.Namespace,
+					}: float32(floatSLO)}
+			}
+
 		}
 	}
 
 	return res, nil
 }
 
-func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, podList *corev1.PodList, uuids []string) (metrics map[string]map[string]float32, err error) {
-	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, podList []*corev1.Pod, uuids []string) (metrics map[string]map[string]float32, err error) {
+	dcgmPod, err := utils.GetNodesDcgmPod(listers.podsLister, nodeName, podList, clientset)
 	if dcgmPod == "" {
-		return nil, fmt.Errorf("Dcgm pod not found")
+		return nil, nil
 	}
 	log.Println("dcgmPod: ", dcgmPod)
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "prometheus", "", clientset, nil)
+	promUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "prometheus-0", "prometheus", "", clientset, nil)
 	log.Println("promUrls: ", promUrls)
 	utils.Check(err)
 	if promUrls == nil {
@@ -202,27 +231,27 @@ func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, po
 	return metrics, nil
 }
 
-func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, podList *corev1.PodList) (metrics map[string]map[string]float32, err error) {
+func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, podList []*corev1.Pod) (metrics map[string]map[string]float32, err error) {
 	if podList == nil {
 		desc, err := resources.New("", "spec.nodeName="+nodeName, "", clientset)
 		if err != nil {
 			return nil, err
 		}
-		podList, err = desc.ListPods()
+		podList, err = desc.ListPods(listers.podsLister)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	dcgmPod, err := utils.GetNodesDcgmPod(nodeName, podList, clientset)
+	dcgmPod, err := utils.GetNodesDcgmPod(listers.podsLister, nodeName, podList, clientset)
 	if dcgmPod == "" {
-		return nil, fmt.Errorf("Dcgm pod not found")
+		return nil, nil
 	}
 	log.Println("dcgmPod: ", dcgmPod)
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod("prometheus-0", "", "", clientset, podList)
+	promUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "prometheus-0", "", "", clientset, podList)
 	log.Println("promUrls: ", promUrls)
 	utils.Check(err)
 	if promUrls == nil {
@@ -266,9 +295,9 @@ func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, pod
 	return metrics, nil
 }
 
-func GetConfigurationPredictions(podName string, podList *corev1.PodList) (configurations map[string]float32, err error) {
+func GetConfigurationPredictions(podName string, podList []*corev1.Pod) (configurations map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "recommender", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod(listers.podsLister, "recommender", "recommender", "", clientset, podList)
 	klog.Info("recommenderIPs: ", recommenderIPs)
 	utils.Check(err)
 	if recommenderIPs == nil {
@@ -294,9 +323,9 @@ func GetConfigurationPredictions(podName string, podList *corev1.PodList) (confi
 	return configurations, nil
 }
 
-func GetInterferencePredictions(podName string, podList *corev1.PodList) (interference map[string]float32, err error) {
+func GetInterferencePredictions(podName string, podList []*corev1.Pod) (interference map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod("recommender", "recommender", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod(listers.podsLister, "recommender", "recommender", "", clientset, podList)
 	utils.Check(err)
 	if recommenderIPs == nil {
 		return nil, err
@@ -321,23 +350,24 @@ func GetInterferencePredictions(podName string, podList *corev1.PodList) (interf
 	return interference, nil
 }
 
-func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64, error) {
+func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (int64, error) {
 	var err error
 	var score int64 = framework.MinNodeScore
 	var selectedUUID string = ""
-	var currSLO float64
+	var currSLO float32
 
 	tmpSLO := utils.GetEnv(pod, "SLO")
 	if tmpSLO == "" {
 		currSLO = 0
 	} else {
-		currSLO, err = strconv.ParseFloat(tmpSLO, 32)
+		tmp, err := strconv.ParseFloat(tmpSLO, 32)
+		currSLO = float32(tmp)
 		if err != nil {
 			currSLO = 0
 		}
 	}
 
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in GetSLOs: ", err.Error())
 	}
@@ -352,8 +382,8 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 
 		for key := range metrics {
 			util := metrics[key]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
-			fbFree := metrics[key]["DCGM_FI_DEV_FB_FREE"]
-			tmpScore := fbFree - util*fbFree
+			// fbFree := metrics[key]["DCGM_FI_DEV_FB_FREE"]
+			tmpScore := 100 * (1 - util)
 			if int64(tmpScore) > score {
 				score = int64(tmpScore)
 			}
@@ -398,19 +428,23 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 		klog.Info("nodeName: ", nodeName, "\nNodeModel: ", nodeModel)
 
 		if nodeModel != "" {
+			k := 0.5
 			for _, uuid := range tmpUuids {
-				var sum float64 = 1
+				var negative_sum float64 = 0
+				var positive_sum float64 = 0
+				count_negative := 0
+				count_positive := 0
 
 				_, ok := SLOs[uuid]
 				// If the key exists
 				if ok {
-					for pod, SLO := range SLOs[uuid] {
+					for scheduledPod, SLO := range SLOs[uuid] {
 						if SLO == 0 {
 							continue
 						}
 
 						confIndex := ""
-						confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
+						confPredictions, err := GetConfigurationPredictions(scheduledPod.Name, nil)
 						if err != nil {
 							return 0, err
 						}
@@ -422,17 +456,17 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 						}
 
 						var interference float32 = 0
-						tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
+						tmpInterference, err := GetInterferencePredictions(scheduledPod.Name, nil)
 						if err != nil {
 							return 0, err
 						}
 						for collocatedPod := range SLOs[uuid] {
-							if pod == collocatedPod {
+							if scheduledPod == collocatedPod {
 								continue
 							}
 
 							for tmpPod, val := range tmpInterference {
-								if strings.Contains(collocatedPod.Name, tmpPod) {
+								if strings.Contains(strings.ReplaceAll(collocatedPod.Name, "-", "_"), tmpPod) {
 									interference += val
 									break
 								}
@@ -440,13 +474,21 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 						}
 
 						for tmpPod, val := range tmpInterference {
-							if strings.Contains(pod.Name, tmpPod) {
+							if strings.Contains(strings.ReplaceAll(pod.Name, "-", "_"), tmpPod) {
 								interference += val
 								break
 							}
 						}
 
-						sum += 1 / (math.Abs(float64(SLO - (confPrediction - interference))))
+						klog.Infof("for pod %s SLO: %f, configuration: %f, interference: %f", scheduledPod.Name, SLO, confPrediction, interference)
+						// find SLO > (confPrediction-interference) and multiply by k
+						if SLO > (confPrediction - interference) {
+							count_negative += 1
+							negative_sum += 1 / (1 + math.Pow(math.Abs(float64((1/SLO)*(SLO-(confPrediction-interference))))+1, 2))
+						} else {
+							count_positive += 1
+							positive_sum += 1 / (1 + math.Abs(float64((1/SLO)*(SLO-(confPrediction-interference)))))
+						}
 					}
 				}
 
@@ -460,12 +502,25 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
 				confPrediction, ok := confPredictions[confIndex]
 				if !ok {
-					var fbFree, util float32 = 100, 0
+					var util float32 = 0
+					// var fbFree float32 = 1
 					if len(metrics) != 0 {
 						util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
-						fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+						// fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
 					}
-					tmpScore := float64(fbFree-fbFree*util) * sum
+
+					factor := 100 * (float64(1 - util))
+					var tmpScore float64 = 0
+
+					if count_positive > 0 && count_negative > 0 {
+						tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
+					} else if count_negative > 0 {
+						tmpScore = factor * (negative_sum / float64(count_negative))
+					} else if count_positive > 0 {
+						tmpScore = factor * (positive_sum / float64(count_positive))
+					}
+
+					klog.Infof("tmpScore for uuid %s: = %f", uuid, tmpScore)
 					if int64(tmpScore) > score {
 						score = int64(tmpScore)
 						selectedUUID = uuid
@@ -488,13 +543,31 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 				}
 				klog.Info("Interference: ", tmpInterference)
 
-				sum += 1 / (math.Abs(float64(float32(currSLO) - (confPrediction - interference))))
+				if currSLO > (confPrediction - interference) {
+					count_negative += 1
+					negative_sum += 1 / (1 + math.Pow(math.Abs(float64((1/currSLO)*(currSLO-(confPrediction-interference))))+1, 2))
+				} else {
+					count_positive += 1
+					positive_sum += 1 / (1 + math.Abs(float64((1/currSLO)*(currSLO-(confPrediction-interference)))))
+				}
 
-				var fbFree, util float32 = 100, 0
+				var fbFree, util float32 = 1, 0
 				if len(metrics) != 0 {
 					util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
 					fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
 				}
+
+				factor := 100 * (float64(1 - util))
+				var tmpScore float64 = 0
+
+				if count_positive > 0 && count_negative > 0 {
+					tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
+				} else if count_negative > 0 {
+					tmpScore = factor * (negative_sum / float64(count_negative))
+				} else if count_positive > 0 {
+					tmpScore = factor * (positive_sum / float64(count_positive))
+				}
+
 				klog.Infof(
 					"Metrics for UUID %s: fb = %f, util = %f, interference = %f, configuration = %f",
 					uuid,
@@ -503,7 +576,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 					interference,
 					confPrediction,
 				)
-				tmpScore := float64(fbFree-fbFree*util) * sum
+				klog.Infof("tmpScore for pod %s and uuid %s: = %f", pod.Name, uuid, tmpScore)
 				if int64(tmpScore) > score {
 					score = int64(tmpScore)
 					selectedUUID = uuid
@@ -517,6 +590,7 @@ func Logic(nodeName string, pod *v1.Pod, clientset *kubernetes.Clientset) (int64
 			klog.Info("Pods.New() failed in PostBind: ", err.Error())
 		}
 		err = podDesc.AppendToExistingConfigMapsInPod(
+			indexers.podIndexer,
 			pod.GetName(),
 			map[string]string{
 				nodeName: selectedUUID,
@@ -583,7 +657,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	var err error
 	clientset, err = utils.CheckClientset(clientset)
 
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", clientset, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}
@@ -607,79 +681,6 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	}
 	var tmpUuids []string
 	json.Unmarshal([]byte(val), &tmpUuids)
-	isMig := utils.Exists(tmpUuids, "MIG")
-	if err != nil {
-		klog.Fatal("Error occured in utils.Exists() in PostBind: ", err)
-	}
-
-	countSave := 0
-	if isMig != -1 {
-		mu.Lock()
-		count = count + 1
-		countSave = count
-		klog.Info("Count for pod {", p.GetName(), "} = ", countSave)
-
-		if countSave > 5 {
-			count = 0
-			// Compute next partition here
-			var nextPartition int
-			for i, partition := range partitions {
-				if len(tmpUuids) == partition {
-					nextPartition = (i + 1) % len(partitions)
-					break
-				}
-			}
-			// Every five pods reconfigure A30
-			if len(tmpUuids) != partitions[nextPartition] {
-				params := resources.PatchNodeParam{
-					Node:         nodeName,
-					OperatorType: "replace",
-					OperatorPath: "/metadata/labels",
-					OperatorData: map[string]interface{}{
-						"nvidia.com/mig.config": configs[nextPartition],
-					},
-				}
-				_, err = params.LabelNode(clientset)
-				if err != nil {
-					klog.Fatal("Error occured in resources.PatchNode() in PostBind: ", err)
-				}
-
-				// Delete profiler pod to get updated with new UUIDs
-				podsDesc, err := resources.New("redis", "", "", clientset)
-				if err != nil {
-					klog.Fatal("Error occured in resources.New() in PostBind: ", err)
-				}
-				podsList, err := podsDesc.ListPods()
-				if err != nil {
-					klog.Fatal("Error occured in resources.ListPods(): ", err)
-				}
-				var nodesProfiler v1.Pod
-				for _, pod := range podsList.Items {
-					if strings.Contains(pod.GetName(), "profiler") && pod.Spec.NodeName == nodeName {
-						nodesProfiler = pod
-						break
-					}
-				}
-				klog.Info("nodesProfiler = ", nodesProfiler.GetName())
-				var gracePeriodSeconds int64 = 0
-				podsDesc.DeletePod(nodesProfiler.GetName(), metav1.DeleteOptions{GracePeriodSeconds: &gracePeriodSeconds})
-
-				// Wait until reconfiguration is finished
-				newUuids, err := redisDesc.Get(nodeName)
-				if err != nil {
-					klog.Fatal("Error occured in redis.Get() in PostBind: ", err)
-				}
-				for newUuids == val {
-					time.Sleep(2 * time.Second)
-					newUuids, err = redisDesc.Get(nodeName)
-					if err != nil {
-						klog.Fatal("Error occured in redis.Get() in PostBind: ", err)
-					}
-				}
-			}
-		}
-		mu.Unlock()
-	}
 
 	var cfgMapName string = ""
 	for _, envFrom := range p.Spec.Containers[0].EnvFrom {
@@ -693,33 +694,39 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	if err != nil {
 		klog.Info("Pods.New() failed in PostBind: ", err.Error())
 	}
-	var cfgMap *v1.ConfigMap
+	var cfgMap *corev1.ConfigMap
 	if cfgMapName != "" {
-		cfgMap, err = podDesc.GetConfigMap(cfgMapName)
+		cfgMap, err = podDesc.GetConfigMap(cfgMapName, indexers.configMapIndexer)
 	}
 	klog.Info("cfgMapName: ", cfgMapName)
-	var uuid string = tmpUuids[rand.Intn(len(tmpUuids))]
-	for key, value := range cfgMap.Data {
-		if key == nodeName {
-			uuid = value
-			break
-		}
-	}
 
-	klog.Info("UUID: ", uuid)
-	// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
-	err = podDesc.AppendToExistingConfigMapsInPod(
-		p.GetName(),
-		// Here find the optimal values for the env variables and replace them below
-		map[string]string{
-			"CUDA_VISIBLE_DEVICES": uuid,
-			// "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
-			// "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
-		},
-		true,
-	)
-	if err != nil {
-		klog.Info("AppendToExistingConfigMapsInPod() failed in PostBind: ", err.Error())
+	if cfgMap != nil {
+		var uuid string = tmpUuids[rand.Intn(len(tmpUuids))]
+		for key, value := range cfgMap.Data {
+			if key == nodeName {
+				uuid = value
+				break
+			}
+		}
+
+		klog.Info("UUID: ", uuid)
+		// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
+		if uuid != "" {
+			err = podDesc.AppendToExistingConfigMapsInPod(
+				indexers.podIndexer,
+				p.GetName(),
+				// Here find the optimal values for the env variables and replace them below
+				map[string]string{
+					"CUDA_VISIBLE_DEVICES": uuid,
+					// "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
+					// "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
+				},
+				true,
+			)
+			if err != nil {
+				klog.Info("AppendToExistingConfigMapsInPod() failed in PostBind: ", err.Error())
+			}
+		}
 	}
 }
 
