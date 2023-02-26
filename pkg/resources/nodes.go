@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
 
 type (
@@ -23,17 +25,23 @@ type (
 	}
 )
 
-func GetLabels(nodeName string, clientset *kubernetes.Clientset) (map[string]string, error) {
-	coreV1 := clientset.CoreV1()
-	node, err := coreV1.Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-	return node.Labels, err
+func GetNode(indexer cache.Indexer, nodeName string) (*corev1.Node, error) {
+	tmp, exists, err := indexer.GetByKey("k8s-aferik-master")
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return &corev1.Node{}, err
+	}
+	return tmp.(*corev1.Node), err
 }
 
-func (p *PatchNodeParam) LabelNode(clientset *kubernetes.Clientset) (result *v1.Node, err error) {
+func (p *PatchNodeParam) LabelNode(indexer cache.Indexer, clientset *kubernetes.Clientset) (result *v1.Node, err error) {
 	coreV1 := clientset.CoreV1()
 	node := p.Node
 
-	operatorData, err := GetLabels(p.Node, clientset)
+	data, err := GetNode(indexer, p.Node)
+	operatorData := data.Labels
 	if err != nil {
 		return nil, err
 	}

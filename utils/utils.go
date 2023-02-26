@@ -1,16 +1,15 @@
 package utils
 
 import (
-	"context"
 	"strings"
 
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/resources"
 
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -22,7 +21,7 @@ func Check(e error) {
 	}
 }
 
-func FindNodeFromPod(podsLister listersv1.PodLister, podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList []*v1.Pod) ([]*v1.Node, error) {
+func FindNodeFromPod(nodeIndexer cache.Indexer, podsLister listersv1.PodLister, podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList []*v1.Pod) ([]*v1.Node, error) {
 	desc, err := resources.New(namespace, fieldSelector, "", clientset)
 	if err != nil {
 		return nil, err
@@ -38,22 +37,27 @@ func FindNodeFromPod(podsLister listersv1.PodLister, podNameContains string, nam
 	nodes := []*v1.Node{}
 	for _, pod := range podList {
 		if strings.Contains(pod.GetName(), podNameContains) {
-			node, err := desc.Clientset.CoreV1().Nodes().Get(
-				context.TODO(),
-				pod.Spec.NodeName,
-				metav1.GetOptions{},
-			)
+			node, err := resources.GetNode(nodeIndexer, pod.Spec.NodeName)
 			if err != nil {
 				return nil, err
 			}
+
+			// node, err := desc.Clientset.CoreV1().Nodes().Get(
+			// 	context.TODO(),
+			// 	pod.Spec.NodeName,
+			// 	metav1.GetOptions{},
+			// )
+			// if err != nil {
+			// 	return nil, err
+			// }
 			nodes = append(nodes, node)
 		}
 	}
 	return nodes, nil
 }
 
-func FindNodesIPFromPod(podsLister listersv1.PodLister, podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList []*v1.Pod) ([]map[string]string, error) {
-	nodes, err := FindNodeFromPod(podsLister, podNameContains, namespace, fieldSelector, clientset, podList)
+func FindNodesIPFromPod(nodeIndexer cache.Indexer, podsLister listersv1.PodLister, podNameContains string, namespace string, fieldSelector string, clientset *kubernetes.Clientset, podList []*v1.Pod) ([]map[string]string, error) {
+	nodes, err := FindNodeFromPod(nodeIndexer, podsLister, podNameContains, namespace, fieldSelector, clientset, podList)
 	if err != nil {
 		return nil, err
 	}

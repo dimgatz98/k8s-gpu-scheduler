@@ -45,11 +45,12 @@ func main() {
 
 	factory := informers.NewSharedInformerFactory(clientset, 10*time.Minute)
 	podsLister := factory.Core().V1().Pods().Lister()
+	nodeIndexer := factory.Core().V1().Nodes().Informer().GetIndexer()
 	stopCh := make(chan struct{})
 	factory.Start(stopCh)
 	factory.WaitForCacheSync(stopCh)
 
-	redisUrls, err := utils.FindNodesIPFromPod(podsLister, "-0", "redis", "", clientset, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(nodeIndexer, podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}

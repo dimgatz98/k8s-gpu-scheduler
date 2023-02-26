@@ -3,7 +3,9 @@ package resources
 import (
 	"errors"
 	"testing"
+	"time"
 
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -52,7 +54,14 @@ func Test_Nodes(t *testing.T) {
 				OperatorPath: tc.operatorPath,
 				OperatorData: tc.operatorData,
 			}
-			_, err := params.LabelNode(clientset)
+
+			factory := informers.NewSharedInformerFactory(clientset, 10*time.Minute)
+			indexer := factory.Core().V1().Nodes().Informer().GetIndexer()
+			stopCh := make(chan struct{})
+			factory.Start(stopCh)
+			factory.WaitForCacheSync(stopCh)
+
+			_, err = params.LabelNode(indexer, clientset)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

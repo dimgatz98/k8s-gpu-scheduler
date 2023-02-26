@@ -59,6 +59,7 @@ type Listers struct {
 
 type Indexers struct {
 	configMapIndexer cache.Indexer
+	nodeIndexer      cache.Indexer
 	podIndexer       cache.Indexer
 }
 
@@ -165,7 +166,7 @@ func GetDcgmMetricsForUUIDS(nodeName string, clientset *kubernetes.Clientset, po
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "prometheus-0", "prometheus", "", clientset, nil)
+	promUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "prometheus-0", "prometheus", "", clientset, nil)
 	log.Println("promUrls: ", promUrls)
 	utils.Check(err)
 	if promUrls == nil {
@@ -252,7 +253,7 @@ func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, pod
 	utils.Check(err)
 
 	// Get prometheus node's IP
-	promUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "prometheus-0", "", "", clientset, podList)
+	promUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "prometheus-0", "", "", clientset, podList)
 	log.Println("promUrls: ", promUrls)
 	utils.Check(err)
 	if promUrls == nil {
@@ -298,7 +299,7 @@ func GetDcgmMetricsForNode(nodeName string, clientset *kubernetes.Clientset, pod
 
 func GetConfigurationPredictions(podName string, podList []*corev1.Pod) (configurations map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod(listers.podsLister, "recommender", "recommender", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "recommender", "recommender", "", clientset, podList)
 	klog.Info("recommenderIPs: ", recommenderIPs)
 	utils.Check(err)
 	if recommenderIPs == nil {
@@ -326,7 +327,7 @@ func GetConfigurationPredictions(podName string, podList []*corev1.Pod) (configu
 
 func GetInterferencePredictions(podName string, podList []*corev1.Pod) (interference map[string]float32, err error) {
 	// Find recommender node's IP
-	recommenderIPs, err := utils.FindNodesIPFromPod(listers.podsLister, "recommender", "recommender", "", clientset, podList)
+	recommenderIPs, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "recommender", "recommender", "", clientset, podList)
 	utils.Check(err)
 	if recommenderIPs == nil {
 		return nil, err
@@ -368,7 +369,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 	}
 
-	redisUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "-0", "redis", "", clientset, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in GetSLOs: ", err.Error())
 	}
@@ -617,6 +618,7 @@ func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev
 		listers.podsLister = factory.Core().V1().Pods().Lister()
 		indexers.configMapIndexer = factory.Core().V1().ConfigMaps().Informer().GetIndexer()
 		indexers.podIndexer = factory.Core().V1().Pods().Informer().GetIndexer()
+		indexers.nodeIndexer = factory.Core().V1().Nodes().Informer().GetIndexer()
 		stopCh := make(chan struct{})
 		factory.Start(stopCh)
 		factory.WaitForCacheSync(stopCh)
@@ -670,7 +672,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 	var err error
 	clientset, err = utils.CheckClientset(clientset)
 
-	redisUrls, err := utils.FindNodesIPFromPod(listers.podsLister, "-0", "redis", "", clientset, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
 		klog.Info("FindNodesIP() failed in PostBind: ", err.Error())
 	}
