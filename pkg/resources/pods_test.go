@@ -74,12 +74,13 @@ func Test_AppendToExistingConfigMapsInPod(t *testing.T) {
 				log.Fatal(err)
 			}
 			factory := informers.NewSharedInformerFactory(desc.Clientset, 10*time.Minute)
-			indexer := factory.Core().V1().ConfigMaps().Informer().GetIndexer()
+			podIndexer := factory.Core().V1().Pods().Informer().GetIndexer()
+			configMapIndexer := factory.Core().V1().ConfigMaps().Informer().GetIndexer()
 			stopCh := make(chan struct{})
 			factory.Start(stopCh)
 			factory.WaitForCacheSync(stopCh)
 
-			err = desc.AppendToExistingConfigMapsInPod(indexer, tc.podName, tc.data, tc.overwrite)
+			err = desc.AppendToExistingConfigMapsInPod(podIndexer, configMapIndexer, tc.podName, tc.data, tc.overwrite)
 			if !errors.Is(err, tc.expectedErr) {
 				fatal(t, tc.expectedErr, err)
 			}

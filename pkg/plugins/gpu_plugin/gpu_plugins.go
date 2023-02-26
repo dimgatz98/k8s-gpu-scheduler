@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
 	"github.com/go-redis/redis/v8"
@@ -591,6 +592,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 		err = podDesc.AppendToExistingConfigMapsInPod(
 			indexers.podIndexer,
+			indexers.configMapIndexer,
 			pod.GetName(),
 			map[string]string{
 				nodeName: selectedUUID,
@@ -607,6 +609,17 @@ func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev
 	clientset, err := utils.CheckClientset(clientset)
 	if err != nil {
 		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("Error in utils.CheckClientset() in Score(): %s", err))
+	}
+
+	if factory == nil {
+		factory = informers.NewSharedInformerFactory(clientset, 10*time.Minute)
+		listers.configMapLister = factory.Core().V1().ConfigMaps().Lister()
+		listers.podsLister = factory.Core().V1().Pods().Lister()
+		indexers.configMapIndexer = factory.Core().V1().ConfigMaps().Informer().GetIndexer()
+		indexers.podIndexer = factory.Core().V1().Pods().Informer().GetIndexer()
+		stopCh := make(chan struct{})
+		factory.Start(stopCh)
+		factory.WaitForCacheSync(stopCh)
 	}
 
 	nodeInfo, err := g.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
@@ -714,6 +727,7 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 		if uuid != "" {
 			err = podDesc.AppendToExistingConfigMapsInPod(
 				indexers.podIndexer,
+				indexers.configMapIndexer,
 				p.GetName(),
 				// Here find the optimal values for the env variables and replace them below
 				map[string]string{

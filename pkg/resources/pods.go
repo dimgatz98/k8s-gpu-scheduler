@@ -102,6 +102,9 @@ func (r *Descriptor) UpdateConfigMap(indexer cache.Indexer, cfgMapName string, d
 	if err != nil {
 		return nil, err
 	}
+	if cfgMap == nil {
+		return nil, err
+	}
 
 	for key, value := range data {
 		_, ok := cfgMap.Data[key]
@@ -150,8 +153,8 @@ func (r *Descriptor) GetConfigMap(cfgMapName string, indexer cache.Indexer) (ret
 	return tmp.(*corev1.ConfigMap), err
 }
 
-func (r *Descriptor) AppendToExistingConfigMapsInPod(indexer cache.Indexer, podName string, data map[string]string, overwrite bool) (err error) {
-	pod, err := r.Get(podName, indexer)
+func (r *Descriptor) AppendToExistingConfigMapsInPod(podIndexer cache.Indexer, configMapIndexer cache.Indexer, podName string, data map[string]string, overwrite bool) (err error) {
+	pod, err := r.Get(podName, podIndexer)
 	if err != nil {
 		return err
 	}
@@ -160,7 +163,7 @@ func (r *Descriptor) AppendToExistingConfigMapsInPod(indexer cache.Indexer, podN
 		for _, envFrom := range container.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
 				cfgMapName := envFrom.ConfigMapRef.LocalObjectReference.Name
-				_, err := r.UpdateConfigMap(indexer, cfgMapName, data, overwrite)
+				_, err := r.UpdateConfigMap(configMapIndexer, cfgMapName, data, overwrite)
 				if err != nil {
 					return err
 				}
