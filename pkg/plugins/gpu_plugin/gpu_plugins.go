@@ -99,8 +99,7 @@ func GetSLOs(nodeName string, uuids []string, clientset *kubernetes.Clientset, r
 		uuidsSet[uuid] = i
 	}
 	for _, pod := range podsList {
-		// If PodSucceeded, PodFailed or PodUnknown ignore
-		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
+		if pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
 
@@ -463,7 +462,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 							return 0, err
 						}
 						for collocatedPod := range SLOs[uuid] {
-							if scheduledPod == collocatedPod {
+							if scheduledPod == collocatedPod || (pod.GetName() == collocatedPod.Name && pod.GetNamespace() == collocatedPod.Namespace) {
 								continue
 							}
 
@@ -474,7 +473,6 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 								}
 							}
 						}
-
 						for tmpPod, val := range tmpInterference {
 							if strings.Contains(strings.ReplaceAll(pod.Name, "-", "_"), tmpPod) {
 								interference += val
@@ -536,6 +534,10 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					return 0, err
 				}
 				for collocatedPod := range SLOs[uuid] {
+					if pod.GetName() == collocatedPod.Name && pod.GetNamespace() == collocatedPod.Namespace {
+						continue
+					}
+
 					for tmpPod, val := range tmpInterference {
 						if strings.Contains(strings.ReplaceAll(collocatedPod.Name, "-", "_"), tmpPod) {
 							interference += val
