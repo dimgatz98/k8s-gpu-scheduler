@@ -430,6 +430,8 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 
 		if nodeModel != "" {
 			k := 0.5
+			rand.Seed(time.Now().UnixNano())
+			rand.Shuffle(len(tmpUuids), func(i, j int) { tmpUuids[i], tmpUuids[j] = tmpUuids[j], tmpUuids[i] })
 			for _, uuid := range tmpUuids {
 				var negative_sum float64 = 0
 				var positive_sum float64 = 0
@@ -513,15 +515,20 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					var tmpScore float64 = 0
 
 					if count_positive > 0 && count_negative > 0 {
+						klog.Info("Both negatives and positives")
 						tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
 					} else if count_negative > 0 {
+						klog.Info("Only negatives")
 						tmpScore = factor * (negative_sum / float64(count_negative))
 					} else if count_positive > 0 {
+						klog.Info("Only positives")
 						tmpScore = factor * (positive_sum / float64(count_positive))
 					}
 
 					klog.Infof("tmpScore for uuid %s: = %f", uuid, tmpScore)
-					if int64(tmpScore) > score {
+					seed := rand.NewSource(time.Now().UnixNano())
+					randomNum := rand.New(seed)
+					if int64(tmpScore) > score || (int64(tmpScore) == score && randomNum.Float32() > 0.5) {
 						score = int64(tmpScore)
 						selectedUUID = uuid
 					}
@@ -565,12 +572,17 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 				var tmpScore float64 = 0
 
 				if count_positive > 0 && count_negative > 0 {
+					klog.Info("Both positive and negative")
 					tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
 				} else if count_negative > 0 {
+					klog.Info("Only negative")
 					tmpScore = factor * (negative_sum / float64(count_negative))
 				} else if count_positive > 0 {
+					klog.Info("Only positive")
 					tmpScore = factor * (positive_sum / float64(count_positive))
 				}
+
+				tmpScore = 0.99 * tmpScore
 
 				klog.Infof(
 					"Metrics for UUID %s: fb = %f, util = %f, interference = %f, configuration = %f",
@@ -580,8 +592,10 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					interference,
 					confPrediction,
 				)
+				seed := rand.NewSource(time.Now().UnixNano())
+				randomNum := rand.New(seed)
 				klog.Infof("tmpScore for pod %s and uuid %s: = %f", pod.Name, uuid, tmpScore)
-				if int64(tmpScore) > score {
+				if (int64(tmpScore) > score) || (int64(tmpScore) == score && randomNum.Float32() > 0.5) {
 					score = int64(tmpScore)
 					selectedUUID = uuid
 				}

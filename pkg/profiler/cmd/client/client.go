@@ -7,11 +7,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/utils"
 
 	"github.com/dimgatz98/k8s-gpu-scheduler/pkg/redis/client"
 
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
@@ -43,8 +46,17 @@ func main() {
 	}
 	klog.Info("UUIDs: ", uuidSlice)
 
+	var clientset *kubernetes.Clientset = nil
+	clientset, err := utils.CheckClientset(clientset)
+	factory := informers.NewSharedInformerFactory(clientset, 10*time.Minute)
+	nodeIndexer := factory.Core().V1().Nodes().Informer().GetIndexer()
+	podsLister := factory.Core().V1().Pods().Lister()
+	stopCh := make(chan struct{})
+	factory.Start(stopCh)
+	factory.WaitForCacheSync(stopCh)
+
 	// Set node's UUIDs in redis
-	redisUrls, err := utils.FindNodesIPFromPod("-0", "redis", "", nil, nil)
+	redisUrls, err := utils.FindNodesIPFromPod(nodeIndexer, podsLister, "-0", "redis", "", nil, nil)
 	if err != nil {
 		log.Fatal("Error in FindNodesIP() in profiler client: ", err.Error())
 	}
