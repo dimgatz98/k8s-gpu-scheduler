@@ -8,7 +8,7 @@ kubectl apply -f ./deploy/redis
 # Create and push profiler
 cd pkg/profiler
 make all
-cd $root
+cd $parent_path
 # Apply profiler
 kubectl apply -f ./deploy/profiler
 # Create and push scheduler

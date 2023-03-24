@@ -76,6 +76,7 @@ type BoundNode struct {
 var factory informers.SharedInformerFactory = nil
 var listers Listers
 var indexers Indexers
+var stopCh chan struct{}
 
 func (g *GPU) Name() string {
 	return Name
@@ -357,6 +358,8 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 	var selectedUUID string = ""
 	var currSLO float32
 
+	klog.Info("Running Logic() for pod " + pod.Name)
+
 	tmpSLO := utils.GetEnv(pod, "SLO")
 	if tmpSLO == "" {
 		currSLO = 0
@@ -368,9 +371,14 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 	}
 
+	podDesc, err := resources.New(pod.GetNamespace(), "", "", clientset)
+	if err != nil {
+		klog.Info("Pods.New() failed in Logic: ", err.Error())
+	}
+
 	redisUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "-0", "redis", "", clientset, nil)
 	if err != nil {
-		klog.Info("FindNodesIP() failed in GetSLOs: ", err.Error())
+		klog.Info("FindNodesIP() failed in Logic: ", err.Error())
 	}
 	if redisUrls == nil {
 		metrics, err := GetDcgmMetricsForNode(nodeName, clientset, nil)
@@ -378,7 +386,8 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 			return 0, err
 		}
 		if len(metrics) == 0 {
-			return 0, fmt.Errorf("empty dcgm metrics")
+			klog.Info("GetDcgmMetricsForNode() failed in Logic()")
+			return 0, nil
 		}
 
 		for key := range metrics {
@@ -390,7 +399,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 			}
 		}
 		klog.Warning("redisUrls empty in Logic()")
-		return score, nil
+		return 0, nil
 	} else {
 		var redisUrl string
 		for _, value := range redisUrls[0] {
@@ -414,10 +423,10 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 		klog.Infof("SLOs: %+v", SLOs)
 
-		metrics, err := GetDcgmMetricsForUUIDS(nodeName, clientset, nil, tmpUuids)
-		if err != nil {
-			return 0, err
-		}
+		// metrics, err := GetDcgmMetricsForUUIDS(nodeName, clientset, nil, tmpUuids)
+		// if err != nil {
+		// 	return 0, err
+		// }
 
 		nodeModel := ""
 		if strings.Contains(nodeName, "a30") {
@@ -449,6 +458,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 						confIndex := ""
 						confPredictions, err := GetConfigurationPredictions(scheduledPod.Name, nil)
 						if err != nil {
+							klog.Info("GetConfigurationPredictions() failed in Logic()")
 							return 0, err
 						}
 
@@ -459,8 +469,9 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 						}
 
 						var interference float32 = 0
-						tmpInterference, err := GetInterferencePredictions(scheduledPod.Name, nil)
+						tmpInterference, err := GetInterferencePredictions(fmt.Sprintf("%s_%s", scheduledPod.Name, nodeModel), nil)
 						if err != nil {
+							klog.Info("GetInterferencePredictions() failed in Logic()")
 							return 0, err
 						}
 						for collocatedPod := range SLOs[uuid] {
@@ -498,24 +509,57 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 				confIndex := ""
 				confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
 				if err != nil {
+					klog.Info("GetConfigurationPredictions() failed in Logic()")
 					return 0, err
 				}
 
-				confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
-				confPrediction, ok := confPredictions[confIndex]
-				if !ok {
-					var util float32 = 0
-					// var fbFree float32 = 1
-					if len(metrics) != 0 {
-						util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
-						// fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+				var confPrediction float32 = -1
+				if nodeModel == "A30" {
+					confIndex = fmt.Sprintf("%dP_%s", len(tmpUuids), nodeModel)
+					confPrediction, ok = confPredictions[confIndex]
+				} else if nodeModel == "V100" {
+					confIndex = fmt.Sprintf("1P_%s", nodeModel)
+					confIndices := []string{
+						fmt.Sprintf("1P_%s", nodeModel),
+						fmt.Sprintf("2P_%s", nodeModel),
+						fmt.Sprintf("4P_%s", nodeModel),
+					}
+					for _, ind := range confIndices {
+						tmp, ok := confPredictions[ind]
+						if ok && tmp > currSLO && (confPrediction == -1 || tmp < confPrediction) {
+							confIndex = ind
+							confPrediction = confPredictions[ind]
+						}
 					}
 
-					factor := 100 * (float64(1 - util))
+					err = podDesc.AppendToExistingConfigMapsInPod(
+						indexers.podIndexer,
+						indexers.configMapIndexer,
+						pod.GetName(),
+						map[string]string{
+							fmt.Sprintf("MPS_%s", nodeName): confIndex,
+						},
+						true,
+					)
+					if err != nil {
+						klog.Info("AppendToExistingConfigMapsInPod() failed in Logic()")
+						return 0, err
+					}
+				}
+				if confPrediction == -1 {
+					// var util float32 = 0
+					// var fbFree float32 = 1
+					// if len(metrics) != 0 {
+					// 	util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
+					// 	fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+					// }
+
+					factor := 100.0
 					var tmpScore float64 = 0
 
 					if count_positive > 0 && count_negative > 0 {
 						klog.Info("Both negatives and positives")
+						k = float64(count_negative) / float64(count_negative+count_positive)
 						tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
 					} else if count_negative > 0 {
 						klog.Info("Only negatives")
@@ -526,9 +570,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					}
 
 					klog.Infof("tmpScore for uuid %s: = %f", uuid, tmpScore)
-					seed := rand.NewSource(time.Now().UnixNano())
-					randomNum := rand.New(seed)
-					if int64(tmpScore) > score || (int64(tmpScore) == score && randomNum.Float32() > 0.5) {
+					if int64(tmpScore) > score {
 						score = int64(tmpScore)
 						selectedUUID = uuid
 					}
@@ -536,7 +578,7 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 				}
 
 				var interference float32 = 0
-				tmpInterference, err := GetInterferencePredictions(pod.Name, nil)
+				tmpInterference, err := GetInterferencePredictions(fmt.Sprintf("%s_%s", pod.Name, nodeModel), nil)
 				if err != nil {
 					return 0, err
 				}
@@ -562,17 +604,17 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					positive_sum += 1 / (1 + math.Abs(float64((1/currSLO)*(currSLO-(confPrediction-interference)))))
 				}
 
-				var fbFree, util float32 = 1, 0
-				if len(metrics) != 0 {
-					util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
-					fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
-				}
+				// var fbFree, util float32 = 1, 0
+				// if len(metrics) != 0 {
+				// 	util = metrics[uuid]["DCGM_FI_PROF_GR_ENGINE_ACTIVE"]
+				// 	fbFree = metrics[uuid]["DCGM_FI_DEV_FB_FREE"]
+				// }
 
-				factor := 100 * (float64(1 - util))
+				factor := 100.0
 				var tmpScore float64 = 0
-
 				if count_positive > 0 && count_negative > 0 {
 					klog.Info("Both positive and negative")
+					k = float64(count_negative) / float64(count_negative+count_positive)
 					tmpScore = factor*((1-k)*positive_sum/float64(count_positive)) + factor*(k*negative_sum/float64(count_negative))
 				} else if count_negative > 0 {
 					klog.Info("Only negative")
@@ -582,20 +624,14 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 					tmpScore = factor * (positive_sum / float64(count_positive))
 				}
 
-				tmpScore = 0.99 * tmpScore
-
 				klog.Infof(
-					"Metrics for UUID %s: fb = %f, util = %f, interference = %f, configuration = %f",
+					"Metrics for UUID %s: interference = %f, configuration = %f",
 					uuid,
-					fbFree,
-					util,
 					interference,
 					confPrediction,
 				)
-				seed := rand.NewSource(time.Now().UnixNano())
-				randomNum := rand.New(seed)
 				klog.Infof("tmpScore for pod %s and uuid %s: = %f", pod.Name, uuid, tmpScore)
-				if (int64(tmpScore) > score) || (int64(tmpScore) == score && randomNum.Float32() > 0.5) {
+				if int64(tmpScore) > score {
 					score = int64(tmpScore)
 					selectedUUID = uuid
 				}
@@ -603,10 +639,6 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 
 		klog.Info("selectedUUID: ", selectedUUID)
-		podDesc, err := resources.New(pod.GetNamespace(), "", "", clientset)
-		if err != nil {
-			klog.Info("Pods.New() failed in PostBind: ", err.Error())
-		}
 		err = podDesc.AppendToExistingConfigMapsInPod(
 			indexers.podIndexer,
 			indexers.configMapIndexer,
@@ -616,10 +648,14 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 			},
 			true,
 		)
+		if err != nil {
+			klog.Info("AppendToExistingConfigMapsInPod() failed in Logic()")
+			return 0, err
+		}
 	}
 
-	klog.Info("Score for node {", nodeName, "} = ", score)
-	return int64(score), nil
+	klog.Info(fmt.Sprintf("Score for node {%s} and pod {%s} = %d", nodeName, pod.Name, score))
+	return score, nil
 }
 
 func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev1.Pod, nodeName string) (int64, *framework.Status) {
@@ -629,16 +665,17 @@ func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev
 	}
 
 	if factory == nil {
-		factory = informers.NewSharedInformerFactory(clientset, 10*time.Minute)
+		factory = informers.NewSharedInformerFactory(clientset, 3*time.Second)
 		listers.configMapLister = factory.Core().V1().ConfigMaps().Lister()
 		listers.podsLister = factory.Core().V1().Pods().Lister()
 		indexers.configMapIndexer = factory.Core().V1().ConfigMaps().Informer().GetIndexer()
 		indexers.podIndexer = factory.Core().V1().Pods().Informer().GetIndexer()
 		indexers.nodeIndexer = factory.Core().V1().Nodes().Informer().GetIndexer()
-		stopCh := make(chan struct{})
+		stopCh = make(chan struct{})
 		factory.Start(stopCh)
 		factory.WaitForCacheSync(stopCh)
 	}
+	factory.WaitForCacheSync(stopCh)
 
 	nodeInfo, err := g.handle.SnapshotSharedLister().NodeInfos().Get(nodeName)
 	if err != nil {
@@ -650,6 +687,7 @@ func (g *GPU) Score(ctx context.Context, state *framework.CycleState, pod *corev
 		return 0, framework.NewStatus(framework.Error, fmt.Sprintf("Error in Logic() in Score(): %s", err))
 	}
 
+	klog.Info(fmt.Sprintf("Final score for node %s and pod %s = %d", nodeName, pod.Name, score))
 	return score, nil
 }
 
@@ -733,25 +771,32 @@ func (g *GPU) PostBind(ctx context.Context, state *framework.CycleState, p *core
 
 	if cfgMap != nil {
 		var uuid string = tmpUuids[rand.Intn(len(tmpUuids))]
+		mpsMem, mpsThreads := "", ""
 		for key, value := range cfgMap.Data {
 			if key == nodeName {
 				uuid = value
-				break
+			} else if key == fmt.Sprintf("MPS_%s", nodeName) {
+				if strings.Contains(value, "2") {
+					mpsMem = "0=16350MB"
+					mpsThreads = "50"
+				} else if strings.Contains(value, "4") {
+					mpsMem = "0=8175MB"
+					mpsThreads = "25"
+				}
 			}
 		}
 
-		klog.Info("UUID: ", uuid)
 		// Add CUDA_VISIBLE_DEVICES in the ConfigMap so that it gets into pod's env
+		klog.Info("UUID: ", uuid)
 		if uuid != "" {
 			err = podDesc.AppendToExistingConfigMapsInPod(
 				indexers.podIndexer,
 				indexers.configMapIndexer,
 				p.GetName(),
-				// Here find the optimal values for the env variables and replace them below
 				map[string]string{
-					"CUDA_VISIBLE_DEVICES": uuid,
-					// "CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  "0=16350MB",
-					// "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": "50",
+					"CUDA_VISIBLE_DEVICES":              uuid,
+					"CUDA_MPS_PINNED_DEVICE_MEM_LIMIT":  mpsMem,
+					"CUDA_MPS_ACTIVE_THREAD_PERCENTAGE": mpsThreads,
 				},
 				true,
 			)
