@@ -24,6 +24,7 @@ import (
 	promMetrics "github.com/dimgatz98/k8s-gpu-scheduler/pkg/prom/fetch_prom_metrics"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -48,9 +49,10 @@ var clientset *kubernetes.Clientset = nil
 
 const Name = "GPU"
 
-var configs []string = []string{"all-1g.6gb", "all-2g.12gb", "all-4g.24gb"}
+var configs []string = []string{"all-4g.24gb", "all-2g.12gb", "all-1g.6gb"}
 var partitions []int = []int{4, 2, 1}
 var configCount = 0
+var nextPartition map[Pod]string = nil
 
 type Listers struct {
 	configMapLister v1.ConfigMapLister
@@ -352,14 +354,109 @@ func GetInterferencePredictions(podName string, podList []*corev1.Pod) (interfer
 	return interference, nil
 }
 
+func reconfigure(nodeName string, redisUrls []map[string]string, SLO float32, pod *corev1.Pod) error {
+	var redisUrl string
+	for _, value := range redisUrls[0] {
+		redisUrl = value
+	}
+	// Add redis port and password in k8s secret
+	redisDesc := client.New(redisUrl+":32767", "1234", 0)
+
+	// Compute optimal configuration
+	confPredictions, err := GetConfigurationPredictions(pod.Name, nil)
+	optimalConfiguration := 0
+	var maxScore float64 = 0
+	for _, i := range []string{"1", "2", "4"} {
+		confIndex := fmt.Sprintf("%sP_%s", i, "A30")
+		confPrediction, ok := confPredictions[confIndex]
+		if !ok {
+			continue
+		}
+		if SLO > confPrediction {
+			score := 100 / (1 + math.Pow(float64(SLO-confPrediction+1), 2))
+			if score >= maxScore {
+				maxScore = score
+				optimalConfiguration, err = strconv.Atoi(i)
+				if err != nil {
+					return err
+				}
+				optimalConfiguration -= 1
+			}
+		} else {
+			score := 100 / (1 + float64(SLO-confPrediction))
+			if score >= maxScore {
+				maxScore = score
+				optimalConfiguration, err = strconv.Atoi(i)
+				if err != nil {
+					return err
+				}
+				optimalConfiguration -= 1
+			}
+		}
+	}
+	if optimalConfiguration == 3 {
+		optimalConfiguration -= 1
+	}
+
+	// Compute next partition here
+	params := resources.PatchNodeParam{
+		Node:         nodeName,
+		OperatorType: "replace",
+		OperatorPath: "/metadata/labels",
+		OperatorData: map[string]interface{}{
+			"nvidia.com/mig.config": configs[optimalConfiguration],
+		},
+	}
+	_, err = params.LabelNode(indexers.nodeIndexer, clientset)
+	if err != nil {
+		return err
+	}
+
+	// Delete profiler pod to get updated with new UUIDs
+	podsDesc, err := resources.New("redis", "", "", clientset)
+	if err != nil {
+		return err
+	}
+	podsList, err := podsDesc.ListPods(listers.podsLister)
+	if err != nil {
+		return err
+	}
+	var nodesProfiler *corev1.Pod
+	for _, pod := range podsList {
+		if strings.Contains(pod.GetName(), "profiler") && pod.Spec.NodeName == nodeName {
+			nodesProfiler = pod
+			break
+		}
+	}
+	klog.Info("nodesProfiler = ", nodesProfiler.GetName())
+	var gracePeriodSeconds int64 = 0
+	podsDesc.DeletePod(nodesProfiler.GetName(), metav1.DeleteOptions{GracePeriodSeconds: &gracePeriodSeconds})
+
+	// Wait until reconfiguration is finished
+	val, err := redisDesc.Get(nodeName)
+	if err != nil {
+		return err
+	}
+	time.Sleep(2 * time.Second)
+	newUuids, err := redisDesc.Get(nodeName)
+	if err != nil {
+		return err
+	}
+	for newUuids == val {
+		time.Sleep(2 * time.Second)
+		newUuids, err = redisDesc.Get(nodeName)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (int64, error) {
 	var err error
 	var score int64 = framework.MinNodeScore
 	var selectedUUID string = ""
 	var currSLO float32
-
-	klog.Info("Running Logic() for pod " + pod.Name)
-
 	tmpSLO := utils.GetEnv(pod, "SLO")
 	if tmpSLO == "" {
 		currSLO = 0
@@ -371,15 +468,43 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		}
 	}
 
+	redisUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "-0", "redis", "", clientset, nil)
+	if err != nil {
+		klog.Info("FindNodesIP() failed in Logic: ", err.Error())
+	}
+
+	podsDesc, err := resources.New(pod.Namespace, "", "", clientset)
+	nodeModel := ""
+	if strings.Contains(nodeName, "a30") {
+		nodeModel = "A30"
+		mu.Lock()
+		podsList, err := podsDesc.ListPods(listers.podsLister)
+		if err != nil {
+			klog.Info("Couldn't list pods in Logic()")
+		}
+
+		emptyA30 := true
+		for _, tmpPod := range podsList {
+			if (tmpPod.Status.Phase == corev1.PodRunning || tmpPod.Status.Phase == corev1.PodPending) && tmpPod.Spec.NodeName == pod.Name {
+				emptyA30 = false
+				break
+			}
+		}
+		if emptyA30 && redisUrls != nil {
+			reconfigure(nodeName, redisUrls, currSLO, pod)
+		}
+		mu.Unlock()
+	} else if strings.Contains(nodeName, "gpu") {
+		nodeModel = "V100"
+	}
+
+	klog.Info("Running Logic() for pod ", pod.Name)
+
 	podDesc, err := resources.New(pod.GetNamespace(), "", "", clientset)
 	if err != nil {
 		klog.Info("Pods.New() failed in Logic: ", err.Error())
 	}
 
-	redisUrls, err := utils.FindNodesIPFromPod(indexers.nodeIndexer, listers.podsLister, "-0", "redis", "", clientset, nil)
-	if err != nil {
-		klog.Info("FindNodesIP() failed in Logic: ", err.Error())
-	}
 	if redisUrls == nil {
 		metrics, err := GetDcgmMetricsForNode(nodeName, clientset, nil)
 		if err != nil {
@@ -427,13 +552,6 @@ func Logic(nodeName string, pod *corev1.Pod, clientset *kubernetes.Clientset) (i
 		// if err != nil {
 		// 	return 0, err
 		// }
-
-		nodeModel := ""
-		if strings.Contains(nodeName, "a30") {
-			nodeModel = "A30"
-		} else if strings.Contains(nodeName, "gpu") {
-			nodeModel = "V100"
-		}
 
 		klog.Info("nodeName: ", nodeName, "\nNodeModel: ", nodeModel)
 
